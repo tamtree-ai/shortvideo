@@ -734,3 +734,165 @@ async def test_a_refusal_quotes_google_but_not_the_credential(
     assert "Permission denied." in message
     assert key_file["private_key"] not in message
     assert TOKEN not in message
+
+
+# -- the phrase-list mode (V1.3) ---------------------------------------------
+
+
+async def test_a_phrase_list_becomes_marked_up_ssml(
+    credential_payload: dict[str, str],
+) -> None:
+    """The author supplies phrases; escaping, mark names and the size check
+    are the node's job, not an expression field's."""
+    kit = _kit(
+        credential_payload,
+        input_mode="captions",
+        captions=["Marks & Spencer beat Q3.", "Here is why."],
+        responses=[
+            _synthesis_response(
+                timepoints=[
+                    {"markName": "p0", "timeSeconds": 0.0},
+                    {"markName": "p1", "timeSeconds": 1.25},
+                ]
+            )
+        ],
+    )
+
+    await kit.run()
+
+    body = _request_body(kit)
+    assert body["input"] == {
+        "ssml": (
+            '<speak><mark name="p0"/>Marks &amp; Spencer beat Q3. '
+            '<mark name="p1"/>Here is why.</speak>'
+        )
+    }
+    assert body["enableTimePointing"] == ["SSML_MARK"]
+
+
+async def test_each_phrase_comes_back_with_the_time_it_is_spoken(
+    credential_payload: dict[str, str],
+) -> None:
+    """D6's payoff: caption text and caption timing meet in one output, with
+    no transcription step and no second model."""
+    kit = _kit(
+        credential_payload,
+        input_mode="captions",
+        captions=["Compound interest.", "Nobody explains it.", "Here is the trick."],
+        responses=[
+            _synthesis_response(
+                timepoints=[
+                    {"markName": "p0", "timeSeconds": 0.0},
+                    {"markName": "p1", "timeSeconds": 0.62},
+                    {"markName": "p2", "timeSeconds": 1.40},
+                ]
+            )
+        ],
+    )
+
+    (item,) = (await kit.run())["main"]
+
+    assert item.json_["captions"] == [
+        {"name": "p0", "text": "Compound interest.", "start_seconds": 0.0, "end_seconds": 0.62},
+        {
+            "name": "p1",
+            "text": "Nobody explains it.",
+            "start_seconds": 0.62,
+            "end_seconds": 1.40,
+        },
+        # The last caption runs to the end of the measured audio — which is
+        # why that measurement has to be exact rather than estimated.
+        {
+            "name": "p2",
+            "text": "Here is the trick.",
+            "start_seconds": 1.40,
+            "end_seconds": 2.0,
+        },
+    ]
+
+
+async def test_text_and_ssml_modes_return_no_caption_track(
+    credential_payload: dict[str, str],
+) -> None:
+    """Hand-written SSML carries marks but no phrase text, so the node has
+    nothing to pair a timing with — `marks` is the honest output there."""
+    (item,) = (await _kit(credential_payload).run())["main"]
+
+    assert item.json_["captions"] == []
+    assert item.json_["marks"] == []
+
+
+async def test_a_phrase_list_arriving_as_a_json_string_still_works(
+    credential_payload: dict[str, str],
+) -> None:
+    """A `json` param comes through parsed from the JSON editor and as a
+    string from an expression. A flow should not fail over which happened."""
+    kit = _kit(
+        credential_payload,
+        input_mode="captions",
+        captions='["One.", "Two."]',
+        responses=[
+            _synthesis_response(
+                timepoints=[
+                    {"markName": "p0", "timeSeconds": 0.0},
+                    {"markName": "p1", "timeSeconds": 0.9},
+                ]
+            )
+        ],
+    )
+
+    (item,) = (await kit.run())["main"]
+
+    assert [caption["text"] for caption in item.json_["captions"]] == ["One.", "Two."]
+
+
+async def test_a_phrase_list_that_is_not_json_says_so(
+    credential_payload: dict[str, str],
+) -> None:
+    kit = _kit(credential_payload, input_mode="captions", captions="One. Two.")
+
+    with pytest.raises(NodeConfigurationError, match="not valid JSON"):
+        await kit.run()
+
+    assert len(kit.requests) == 1  # nothing was synthesized
+
+
+async def test_an_over_long_phrase_list_is_refused_before_it_is_billed(
+    credential_payload: dict[str, str],
+) -> None:
+    kit = _kit(
+        credential_payload,
+        input_mode="captions",
+        captions=["A reasonably long sentence about compound interest."] * 200,
+    )
+
+    with pytest.raises(NodeConfigurationError, match="split this beat"):
+        await kit.run()
+
+    assert len(kit.requests) == 1
+
+
+async def test_a_voice_that_drops_marks_fails_in_phrase_mode_too(
+    credential_payload: dict[str, str],
+) -> None:
+    """The generated marks are checked exactly like hand-written ones — a
+    Studio voice must not silently produce a short with no captions."""
+    kit = _kit(
+        credential_payload,
+        input_mode="captions",
+        voice_name="en-US-Studio-O",
+        captions=["One.", "Two."],
+        responses=[_synthesis_response(timepoints=[])],
+    )
+
+    with pytest.raises(TimepointsUnsupported, match="2 of 2 caption marks"):
+        await kit.run()
+
+
+async def test_an_unknown_input_mode_is_refused_by_name(
+    credential_payload: dict[str, str],
+) -> None:
+    kit = _kit(credential_payload, input_mode="interpretive-dance")
+
+    with pytest.raises(NodeConfigurationError, match="Unknown input mode"):
+        await kit.run()

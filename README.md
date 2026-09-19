@@ -33,11 +33,36 @@ plugin at boot with a named error rather than half-loading it.
 Turns a paragraph into a narration attachment, its **measured** duration, and
 caption timings.
 
-Give it plain text, or SSML with `<mark>` tags — every mark comes back as
-`marks[{name, time_seconds}]`, which is where captions get their timing without
-a second model in the path. The audio arrives as a binary attachment (named
-`audio` by default) rather than inline bytes, and whatever the incoming item
-already carried travels on untouched.
+Three ways to give it words:
+
+| Input | For |
+|---|---|
+| **Plain text** | One block of narration, read as written. |
+| **SSML** | Hand-written markup when you want control over pacing, pronunciation or your own `<mark>` placement. |
+| **Phrase list** | A list of caption phrases. The node builds the SSML — escaping, mark names, size check — and returns each phrase with the time it is spoken. |
+
+Every `<mark>` comes back as `marks[{name, time_seconds}]`, which is where
+captions get their timing without a second model in the path. In phrase-list
+mode you get the finished article instead: `captions[{name, text,
+start_seconds, end_seconds}]`, each phrase running until the next one starts
+and the last to the end of the audio.
+
+```json
+["Compound interest is misunderstood.", "Here is the part nobody mentions."]
+```
+
+becomes
+
+```json
+[{"name": "p0", "text": "Compound interest is misunderstood.",
+  "start_seconds": 0.0, "end_seconds": 2.14},
+ {"name": "p1", "text": "Here is the part nobody mentions.",
+  "start_seconds": 2.14, "end_seconds": 4.02}]
+```
+
+The audio arrives as a binary attachment (named `audio` by default) rather than
+inline bytes, and whatever the incoming item already carried travels on
+untouched.
 
 **Set up the credential first.** Under Credentials, add a **Google service
 account**: paste the *whole* JSON key file downloaded from a service account in
@@ -59,7 +84,7 @@ approximation:
 
 | It refuses | Because |
 |---|---|
-| Input over 5,000 UTF-8 bytes | Google's synchronous limit. Truncating would cut a sentence and the short would never mention it — split the beat instead. |
+| Input over 5,000 UTF-8 bytes | Google's synchronous limit. Truncating would cut a sentence and the short would never mention it. In phrase-list mode the error names how many phrases *would* have fit, so you know where to split the beat. |
 | Audio formats other than WAV, MP3 and Ogg Opus | The timeline is built on an exactly measured duration, and only these three carry one. |
 | A voice that returns no caption marks | Support for `<mark>` varies by voice; Studio voices have none. A short with silently missing captions is worse than a failed step. Turn the check off if the captions are genuinely optional. |
 | Marks that run backwards or land past the end of the audio | Captions built from them would be wrong after the render, not before it. |
@@ -103,6 +128,14 @@ after two implementations prove a shared contract.
 allowlist names only the two hosts this plugin actually talks to. Waves 2–3 add
 each one alongside the node that uses it, so every permission in this manifest
 has a reviewer.
+
+**Escaping, mark naming and the size check live in the node, not in an
+expression field.** A script step that writes "Marks & Spencer's Q3 < Q4" into
+a hand-built `<speak>` template produces malformed XML and an
+`INVALID_ARGUMENT` that names nothing useful; two phrases given the same mark
+name produce a caption track that silently mismatches its text. Those are not
+edge cases, they are what a real script does on a Tuesday — so phrase-list
+mode handles all three once.
 
 **Durations are measured, never estimated.** Narration length is what decides
 where a beat splits, how a clip is trimmed and when a caption appears. So the

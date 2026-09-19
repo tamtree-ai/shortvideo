@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 from decimal import Decimal
 from typing import Any, ClassVar, Final
@@ -46,6 +47,7 @@ from tamtree_plugin_sdk import (
 from tamtree_shortvideo import google_auth
 from tamtree_shortvideo.audio_duration import MEASURABLE_ENCODINGS, duration_seconds
 from tamtree_shortvideo.credentials import CREDENTIAL_TYPE
+from tamtree_shortvideo.ssml import SsmlDocument, build_ssml
 
 __all__ = [
     "MAX_INPUT_BYTES",
@@ -196,6 +198,19 @@ class GoogleTtsNode(ProgrammaticNode):
                                 },
                                 "required": ["language_code"],
                             },
+                            "captions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "text": {"type": "string"},
+                                        "start_seconds": {"type": "number"},
+                                        "end_seconds": {"type": "number"},
+                                    },
+                                    "required": ["name", "text", "start_seconds", "end_seconds"],
+                                },
+                            },
                             "billed_characters": {"type": "number"},
                             "cost_usd": {"type": "string"},
                             "input_mode": {"type": "string"},
@@ -219,10 +234,16 @@ class GoogleTtsNode(ProgrammaticNode):
                     "options": [
                         {"value": "text", "label": "Plain text"},
                         {"value": "ssml", "label": "SSML — for caption marks and fine control"},
+                        {
+                            "value": "captions",
+                            "label": "Phrase list — SSML and caption timings built for you",
+                        },
                     ],
                     "description": (
                         "Plain text is read as written. SSML lets you place <mark> tags, "
-                        "which come back as caption timings."
+                        "which come back as caption timings. A phrase list builds that SSML "
+                        "for you — escaping, mark names and the size limit handled — and "
+                        "returns each phrase with the time it is spoken."
                     ),
                 },
                 {
@@ -243,6 +264,18 @@ class GoogleTtsNode(ProgrammaticNode):
                         "must come back as a timing or the step fails by name."
                     ),
                     "display_options": {"show": {"input_mode": ["ssml"]}},
+                },
+                {
+                    "name": "captions",
+                    "label": "Phrases",
+                    "type": "json",
+                    "default": [],
+                    "description": (
+                        'A list of phrases — ["First line.", "Second line."] — or objects '
+                        'like {"text": "…", "name": "own-mark-name"}. One caption per entry, '
+                        "spoken in order."
+                    ),
+                    "display_options": {"show": {"input_mode": ["captions"]}},
                 },
                 {
                     "name": "language_code",
@@ -368,7 +401,7 @@ class GoogleTtsNode(ProgrammaticNode):
 
     async def _synthesize(self, ctx: ExecutionContext, item: Item, token: str) -> Item:
         mode = (_text(ctx.param("input_mode", item=item)) or "text").lower()
-        body_text = _text(ctx.param("text" if mode == "text" else "ssml", item=item))
+        body_text, document = _input(ctx, item, mode=mode)
         encoding = (_text(ctx.param("audio_encoding", item=item)) or "LINEAR16").upper()
         language_code = _text(ctx.param("language_code", item=item)) or "en-US"
         voice_name = _text(ctx.param("voice_name", item=item)).strip()
@@ -381,10 +414,12 @@ class GoogleTtsNode(ProgrammaticNode):
         _check_input(body_text, mode=mode)
         _check_encoding(encoding)
         rate_per_million = _price(ctx, item)
-        expected_marks = mark_names(body_text) if mode == "ssml" else []
+        expected_marks = [] if mode == "text" else mark_names(body_text)
 
         request: dict[str, Any] = {
-            "input": {mode: body_text},
+            # A built document is SSML as far as the API is concerned; the
+            # phrase list is this node's convenience, not Google's contract.
+            "input": {"text" if mode == "text" else "ssml": body_text},
             "voice": _voice(language_code, voice_name, gender),
             "audioConfig": _audio_config(ctx, item, encoding),
         }
@@ -446,6 +481,7 @@ class GoogleTtsNode(ProgrammaticNode):
                 "name": voice_name,
                 "ssml_gender": gender,
             },
+            "captions": _captions(document, marks, duration=seconds),
             "billed_characters": billed,
             "cost_usd": str(cost),
             "input_mode": mode,
@@ -463,11 +499,93 @@ class GoogleTtsNode(ProgrammaticNode):
         )
 
 
+def _input(ctx: ExecutionContext, item: Item, *, mode: str) -> tuple[str, SsmlDocument | None]:
+    """The document to send, and the phrase list behind it when there was one.
+
+    The third mode is a *generator*, not a third API field: Google takes text
+    or SSML, and a phrase list becomes SSML here. Keeping that translation in
+    one place is what lets `captions` be returned with real timings later in
+    the same pass.
+    """
+    if mode == "text":
+        return _text(ctx.param("text", item=item)), None
+    if mode == "ssml":
+        return _text(ctx.param("ssml", item=item)), None
+    if mode == "captions":
+        document = build_ssml(
+            _caption_list(ctx.param("captions", item=item)), max_bytes=MAX_INPUT_BYTES
+        )
+        return document.ssml, document
+    raise NodeConfigurationError(
+        f"Unknown input mode {mode!r} — choose 'text', 'ssml' or 'captions'."
+    )
+
+
+def _caption_list(value: Any) -> list[Any]:
+    """The phrase list, however the editor handed it over.
+
+    A `json` param arrives parsed when the author used the JSON editor and as
+    a string when it came through an expression, and a flow should not fail
+    over which of the two happened.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise NodeConfigurationError(
+                f"Phrases is not valid JSON (line {error.lineno}, column {error.colno}). It "
+                'should be a list, like ["First line.", "Second line."].'
+            ) from None
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise NodeConfigurationError(
+            f"Phrases must be a list and this is a {type(value).__name__}. Use the plain-text "
+            "input for one block of narration."
+        )
+    return value
+
+
+def _captions(
+    document: SsmlDocument | None, marks: list[dict[str, Any]], *, duration: float
+) -> list[dict[str, Any]]:
+    """Each phrase joined to the moment it is spoken, and to when it ends.
+
+    D6's payoff: caption text and caption timing meet here, with no second
+    model and no transcription step. A caption runs until the next one starts,
+    and the last runs to the end of the audio — which is why the measured
+    duration has to be exact and not estimated.
+
+    Only phrases whose mark actually came back are included; a missing mark is
+    already a named failure unless the author turned that check off, and in
+    that case a caption with no timing is worse than no caption.
+    """
+    if document is None:
+        return []
+    timings = {mark["name"]: float(mark["time_seconds"]) for mark in marks}
+    timed = [
+        (phrase, timings[phrase.name]) for phrase in document.phrases if phrase.name in timings
+    ]
+    captions: list[dict[str, Any]] = []
+    for index, (phrase, start) in enumerate(timed):
+        end = timed[index + 1][1] if index + 1 < len(timed) else duration
+        captions.append(
+            {
+                "name": phrase.name,
+                "text": phrase.text,
+                "start_seconds": start,
+                "end_seconds": max(start, end),
+            }
+        )
+    return captions
+
+
 def _check_input(body: str, *, mode: str) -> None:
-    if mode not in ("text", "ssml"):
-        raise NodeConfigurationError(f"Unknown input mode {mode!r} — choose 'text' or 'ssml'.")
     if not body.strip():
-        label = "Text" if mode == "text" else "SSML"
+        label = {"text": "Text", "ssml": "SSML"}.get(mode, "The narration")
         raise NodeConfigurationError(
             f"{label} is empty, so there is nothing to synthesize. Map this step's "
             f"{label.lower()} from the script step, or type it in."
