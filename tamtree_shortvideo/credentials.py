@@ -38,7 +38,15 @@ from typing import Final
 
 from tamtree_plugin_sdk import CredentialFieldSpec, CredentialTypeSpec
 
-__all__ = ["CREDENTIAL_TYPE", "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL", "KEY_FIELD"]
+__all__ = [
+    "CREDENTIAL_TYPE",
+    "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
+    "KEY_FIELD",
+    "MINIMAX_API_CREDENTIAL",
+    "MINIMAX_CREDENTIAL_TYPE",
+    "MINIMAX_DEFAULT_TEST_URL",
+    "MINIMAX_TOKEN_FIELD",
+]
 
 #: The registered type name. Must equal the entry-point name or the registry
 #: refuses the boot — one constant so the spec, the manifest, the node
@@ -68,4 +76,70 @@ GOOGLE_SERVICE_ACCOUNT_CREDENTIAL: Final = CredentialTypeSpec(
             placeholder='{"type": "service_account", "project_id": "…", …}',
         )
     ],
+)
+
+
+# -- MiniMax (V2.1) ----------------------------------------------------------
+#
+# **Why its own type rather than the generic `api_key`.** The credential picker
+# on a node shows type names, and "API key" on a canvas holding three vendors
+# tells the author nothing about which of their keys belongs in which slot —
+# the plan's V2.1 says so in as many words. A named type also lets both MiniMax
+# nodes *require* it, so the engine refuses to dispatch a step with no binding
+# instead of failing inside the node against a header that was never set.
+#
+# **Why `auth_kind="bearer"` and a field literally called `token`.** Unlike the
+# Google credential, this one carries a plain bearer token, so the shipped
+# `credential_auth_headers` can build its header — and that function reads the
+# field named `token` for this kind and no other name
+# (`packages/sdk/tamtree_sdk/http_client.py:55-58 @ 90e82780`). Calling the
+# field `api_key` would have produced a credential that stores fine, tests as
+# "connected" never, and authenticates nothing.
+#
+# **Why it *can* be probed when the Google one cannot.** `test_connection`
+# builds its headers through that same function, so a bearer credential is
+# testable for real. What it needs is a URL that answers 200 for a valid key
+# and costs nothing — see `MINIMAX_DEFAULT_TEST_URL`.
+
+MINIMAX_CREDENTIAL_TYPE: Final = "minimax_api"
+
+MINIMAX_TOKEN_FIELD: Final = "token"
+
+#: The OpenAI-compatible model listing. Chosen as the probe because it is
+#: metadata rather than inference: it generates nothing, so it cannot bill for
+#: a generation. MiniMax's docs do not state a price for it either way, so that
+#: is a reasoned choice and not a quoted guarantee — which is the honest
+#: version of the plan's "non-billable probe". The field carries a default so
+#: the credential tests out of the box, and stays editable for a deployment on
+#: a different MiniMax region.
+MINIMAX_DEFAULT_TEST_URL: Final = "https://api.minimax.io/v1/models"
+
+
+MINIMAX_API_CREDENTIAL: Final = CredentialTypeSpec(
+    type=MINIMAX_CREDENTIAL_TYPE,
+    display_name="MiniMax API",
+    description=(
+        "An API key from the MiniMax platform (Account Management → API Keys), "
+        "used to generate video clips. Video generation is billed per second of "
+        "output — give this key to a project whose spend you are watching."
+    ),
+    auth_kind="bearer",
+    fields=[
+        CredentialFieldSpec(
+            name=MINIMAX_TOKEN_FIELD,
+            label="API key",
+            secret=True,
+            required=True,
+            placeholder="eyJhbGciOi…",
+        ),
+        CredentialFieldSpec(
+            name="test_url",
+            label="Test URL",
+            secret=False,
+            required=False,
+            default=MINIMAX_DEFAULT_TEST_URL,
+            placeholder=MINIMAX_DEFAULT_TEST_URL,
+        ),
+    ],
+    test_url_field="test_url",
 )

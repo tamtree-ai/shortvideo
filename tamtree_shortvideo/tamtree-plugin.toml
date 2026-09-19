@@ -19,9 +19,16 @@ permissions = ["network", "secrets"]
 # Boot-inventory truth, not a runtime jail (SEC-G1): the node context is built
 # with `egress_block_private` alone and no allowlist, so nothing gates on these
 # at run time. They are declared so an operator reviewing the install can see
-# where this plugin talks, and `texttospeech.googleapis.com` is listed with the
-# token endpoint because V1.2 is the only reason V1.1 exists.
-egress_allowlist = ["oauth2.googleapis.com", "texttospeech.googleapis.com"]
+# where this plugin talks — which is worth something only while the list is
+# complete, so each host arrives with the code that reaches it.
+#   oauth2.googleapis.com     — the service-account token mint (V1.1)
+#   texttospeech.googleapis.com — narration synthesis (V1.2)
+#   api.minimax.io            — video generation: create, query, cancel (V2)
+egress_allowlist = [
+  "oauth2.googleapis.com",
+  "texttospeech.googleapis.com",
+  "api.minimax.io",
+]
 
 [contracts]
 # Pinned to the contracts this plugin is developed and tested against
@@ -33,6 +40,13 @@ egress_allowlist = ["oauth2.googleapis.com", "texttospeech.googleapis.com"]
 # reason, as `craftmypdf-connector` does for ^1.28.
 sdk = "^1.33"
 
+# Documentation for whoever reads the boot inventory; `pyproject.toml` is what
+# the registry actually discovers, and nothing validates the two against each
+# other. Note the schema's limit: `entry_points` is `dict[str, str]`, so a
+# plugin contributing *two* credential types (this one contributes
+# `google_service_account` and `minimax_api`) cannot name both here. The
+# `pyproject.toml` group is authoritative; `tests/test_registration.py` is what
+# keeps it honest.
 [entry_points]
 "tamtree.nodes" = "tamtree_shortvideo:NODES"
 "tamtree.credential_types" = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"

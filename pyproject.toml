@@ -34,6 +34,7 @@ shortvideo = "tamtree_shortvideo:NODES"
 # refuses the boot if the two disagree.
 [project.entry-points."tamtree.credential_types"]
 google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
+minimax_api = "tamtree_shortvideo:MINIMAX_API_CREDENTIAL"
 
 [tool.uv.sources]
 # Sibling Tamtree checkout at ~/sites/tamtree. Swap for the git URL in README

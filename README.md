@@ -4,8 +4,9 @@ Short-form vertical video generation for [Tamtree](https://github.com/tamtree-ai
 packaged as an installable plugin: narration, footage and composition, as nodes
 on the canvas.
 
-> **Status: Wave 1 in progress.** Narration works end to end; footage and
-> composition are not built yet. See [Roadmap](#roadmap).
+> **Status: Wave 2 in progress.** Narration works end to end and footage can
+> be submitted; collection and composition are not built yet. See
+> [Roadmap](#roadmap).
 
 This is an ordinary Python package. It lives in its own repository, on its own
 release schedule, and Tamtree finds it at startup through **entry points** — no
@@ -89,6 +90,38 @@ approximation:
 | A voice that returns no caption marks | Support for `<mark>` varies by voice; Studio voices have none. A short with silently missing captions is worse than a failed step. Turn the check off if the captions are genuinely optional. |
 | Marks that run backwards or land past the end of the audio | Captions built from them would be wrong after the render, not before it. |
 
+### Short video — MiniMax submit (`shortvideo.minimax_submit`)
+
+Starts one video generation and returns its `task_id`. It does **not** wait for
+the clip — `shortvideo.minimax_collect` does that, and the split is the point:
+`ExecutionContext` has no mid-node checkpoint, so a node that submitted and then
+polled could not write the task id down until the whole step succeeded, and a
+worker restart in the middle would submit a second time and bill a second time.
+
+Set up a **MiniMax API** credential first (Account Management → API Keys). Unlike
+the Google one, this credential can be tested for real: *Test connection* probes
+a model listing, which generates nothing.
+
+Duration and resolution limits differ by model and are checked **locally**, so a
+wrong value fails before it reaches a paid API:
+
+| Model | Duration | Resolution |
+|---|---|---|
+| `MiniMax-H3` | 4–15s | 768P, 2K |
+| `MiniMax-H3-Max` | 5–15s | 480P, 768P |
+
+**It will not retry a create call on its own.** MiniMax documents no idempotency
+key, so a retried create is a second charge that nothing can recognise as a
+duplicate. A `429` is safe to retry and is retried; a `5xx`, a timeout or a
+dropped connection is *not*, because none of them says whether the clip was
+accepted. Those fail with a named error carrying MiniMax's `request_id`, and you
+decide whether to resubmit. This is a deliberate limit, not an oversight: **this
+plugin never claims exactly-once provider spend.**
+
+Image and reference inputs (`first_frame`, `last_frame`, `reference_image`) are
+not here yet — a workspace attachment is not a public URL, and that transport is
+its own piece of work.
+
 ## Develop
 
 ```sh
@@ -137,6 +170,12 @@ name produce a caption track that silently mismatches its text. Those are not
 edge cases, they are what a real script does on a Tuesday — so phrase-list
 mode handles all three once.
 
+**Money is never spent on a guess.** Both paid nodes refuse locally what they
+can check locally — input size, the model matrix, the aspect ratio — so a wrong
+value costs a validation error rather than a run and a bill. And where a
+provider's answer is *ambiguous* rather than failed, the node stops and says so
+instead of retrying into a second charge.
+
 **Durations are measured, never estimated.** Narration length is what decides
 where a beat splits, how a clip is trimmed and when a caption appears. So the
 audio format dropdown offers only containers whose playing time can be read
@@ -149,7 +188,7 @@ than guessed at.
 |---|---|---|
 | **0** | Plugin skeleton — manifest, entry point, contracts pin, contract tests | **done** |
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
-| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | not started |
+| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **in progress** — submit done |
 | **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
 | **4** | Published template, attachment-aware approval, recovery | not started |
 

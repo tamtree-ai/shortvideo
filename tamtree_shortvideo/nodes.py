@@ -17,6 +17,7 @@ from typing import Final
 from tamtree_plugin_sdk import Node
 
 from tamtree_shortvideo.google_tts import GoogleTtsNode
+from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 
 __all__ = ["CATEGORY", "ICON", "NODES"]
 
@@ -25,4 +26,4 @@ __all__ = ["CATEGORY", "ICON", "NODES"]
 ICON: Final = "icons/shortvideo.svg"
 CATEGORY: Final = "Files & media"
 
-NODES: Final[list[Node]] = [GoogleTtsNode()]
+NODES: Final[list[Node]] = [GoogleTtsNode(), MinimaxSubmitNode()]

@@ -18,12 +18,15 @@ from tamtree_plugin_sdk import (
 from tamtree_sdk import PluginRefusedError
 
 from tamtree_shortvideo import NODES
-from tamtree_shortvideo.credentials import CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
 from tamtree_shortvideo.google_auth import DEFAULT_TOKEN_URI
 from tamtree_shortvideo.google_tts import NODE_NAME, SYNTHESIZE_URL
+from tamtree_shortvideo.minimax import API_HOST
 from tamtree_shortvideo.nodes import CATEGORY, ICON
 
-EXPECTED_NODES = {"shortvideo.google_tts"}
+EXPECTED_NODES = {"shortvideo.google_tts", "shortvideo.minimax_submit"}
+
+EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api"}
 
 PLUGIN_NAME = "shortvideo"
 
@@ -37,6 +40,11 @@ def _entry_points() -> list[EntryPoint]:
         EntryPoint(
             name=CREDENTIAL_TYPE,
             value="tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
+            group=GROUP_CREDENTIAL_TYPES,
+        ),
+        EntryPoint(
+            name=MINIMAX_CREDENTIAL_TYPE,
+            value="tamtree_shortvideo:MINIMAX_API_CREDENTIAL",
             group=GROUP_CREDENTIAL_TYPES,
         ),
     ]
@@ -77,7 +85,7 @@ def test_every_node_declares_the_credentials_it_uses() -> None:
     for node in NODES:
         assert node.manifest.credentials, node.manifest.name
         for requirement in node.manifest.credentials:
-            assert requirement.type == CREDENTIAL_TYPE
+            assert requirement.type in EXPECTED_CREDENTIAL_TYPES
 
 
 def test_ships_a_square_icon() -> None:
@@ -85,6 +93,16 @@ def test_ships_a_square_icon() -> None:
     assert len(svg) < 20_000
     assert b"<svg" in svg
     assert b'viewBox="0 0 24 24"' in svg
+
+
+def test_plugin_discovers_its_credential_types() -> None:
+    """The `pyproject.toml` group is authoritative and the manifest's
+    `entry_points` table cannot even express two contributions in one group
+    (`dict[str, str]`), so this is what keeps the declaration honest."""
+    registry = PluginRegistry()
+    registry.discover(_entry_points)
+
+    assert EXPECTED_CREDENTIAL_TYPES <= set(registry.credential_types())
 
 
 def test_plugin_discovers_its_nodes() -> None:
@@ -121,6 +139,7 @@ def test_the_declared_egress_matches_where_the_code_actually_talks() -> None:
     allowlist = registry.plugins()[PLUGIN_NAME].manifest.capabilities.egress_allowlist
     assert DEFAULT_TOKEN_URI.split("/")[2] in allowlist
     assert SYNTHESIZE_URL.split("/")[2] in allowlist
+    assert API_HOST.split("/")[2] in allowlist
 
 
 def test_an_older_instance_refuses_the_plugin_at_boot() -> None:

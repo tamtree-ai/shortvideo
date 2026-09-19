@@ -15,8 +15,9 @@ from typing import Any
 import httpx
 from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 
-from tamtree_shortvideo.credentials import CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
 from tamtree_shortvideo.google_tts import NODE_NAME, GoogleTtsNode
+from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tests.audio_fixtures import wav_bytes
 from tests.conftest import key_file_payload
 
@@ -71,3 +72,34 @@ def test_the_node_declares_the_credential_it_cannot_run_without() -> None:
 
 def test_the_manifest_and_the_module_agree_on_the_node_id() -> None:
     assert GoogleTtsNode().manifest.name == NODE_NAME == "shortvideo.google_tts"
+
+
+class TestMinimaxSubmitContract(NodeContract):
+    """The same bar for the second node: `make_context` has to produce one it
+    can actually execute against, credential and create answer included."""
+
+    def make_node(self) -> MinimaxSubmitNode:
+        return MinimaxSubmitNode()
+
+    def make_context(self) -> FakeContext:
+        return (
+            NodeTestKit(MinimaxSubmitNode())
+            .params(
+                model="MiniMax-H3",
+                prompt="A coin stack growing in warm light.",
+                duration_seconds=6,
+                resolution="768P",
+                ratio="9:16",
+                prompt_expansion_mode="balanced",
+            )
+            .credentials({MINIMAX_CREDENTIAL_TYPE: {"token": "eyJ-contract-test-key"}})
+            .responses([httpx.Response(200, json={"task_id": "t1", "request_id": "r1"})])
+            .context()
+        )
+
+
+def test_the_submit_node_declares_its_credential() -> None:
+    (requirement,) = MinimaxSubmitNode().manifest.credentials
+
+    assert requirement.type == MINIMAX_CREDENTIAL_TYPE
+    assert requirement.required is True
