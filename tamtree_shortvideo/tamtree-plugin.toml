@@ -1,0 +1,28 @@
+[plugin]
+name = "shortvideo"
+version = "0.0.1"
+kinds = ["node"]
+license = "Apache-2.0"
+publisher = "tamtree-community"
+homepage = "https://github.com/tamtree-ai/shortvideo"
+repository = "https://github.com/tamtree-ai/shortvideo"
+
+[capabilities]
+# Deliberately empty at V0.5. The skeleton node computes locally and talks to
+# nothing, so it claims nothing — a permission declared before a node needs it
+# is a permission nobody reviews. `network` + `secrets` and the Google/MiniMax
+# egress hosts arrive with the nodes that actually make those calls (Waves 1-2).
+permissions = []
+egress_allowlist = []
+
+[contracts]
+# Pinned to the contracts this plugin is developed and tested against
+# (CONTRACTS_VERSION 1.33.0 at product `main`). This is a tested floor, not a
+# measured one: no lower SDK has been exercised, so none is claimed. Waves 1-3
+# may raise it — a credential-field default, a bounded-download seam or a
+# curated-backend registration each move the real floor up, and the raise is
+# recorded here with the reason, as `craftmypdf-connector` does for ^1.28.
+sdk = "^1.33"
+
+[entry_points]
+"tamtree.nodes" = "tamtree_shortvideo:NODES"
