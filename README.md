@@ -4,10 +4,8 @@ Short-form vertical video generation for [Tamtree](https://github.com/tamtree-ai
 packaged as an installable plugin: narration, footage and composition, as nodes
 on the canvas.
 
-> **Status: V0.5 skeleton.** The packaging is real and proven; the pipeline is
-> not built yet. What ships today is one self-test node whose only job is to
-> prove that this distribution installs, registers and runs on a real Tamtree.
-> See [Roadmap](#roadmap).
+> **Status: Wave 1 in progress.** Narration works end to end; footage and
+> composition are not built yet. See [Roadmap](#roadmap).
 
 This is an ordinary Python package. It lives in its own repository, on its own
 release schedule, and Tamtree finds it at startup through **entry points** — no
@@ -28,18 +26,43 @@ Requires a Tamtree whose SDK contracts are `>=1.33, <2` — the `[contracts] sdk
 pin in `tamtree_shortvideo/tamtree-plugin.toml`. An older instance refuses the
 plugin at boot with a named error rather than half-loading it.
 
-### Verify the install
+## Nodes
 
-Drop a **Short video — Self test** node on a canvas and run it. It needs no
-credential and reaches no network. A green run returns:
+### Short video — Google Text-to-Speech (`shortvideo.google_tts`)
 
-```json
-{ "ok": true, "plugin": "shortvideo", "node": "shortvideo.selftest",
-  "contracts_version": "1.33.0", "note": "" }
-```
+Turns a paragraph into a narration attachment, its **measured** duration, and
+caption timings.
 
-`contracts_version` is what the **host** provides, not what this package was
-built against — which is what makes it worth reading after an upgrade.
+Give it plain text, or SSML with `<mark>` tags — every mark comes back as
+`marks[{name, time_seconds}]`, which is where captions get their timing without
+a second model in the path. The audio arrives as a binary attachment (named
+`audio` by default) rather than inline bytes, and whatever the incoming item
+already carried travels on untouched.
+
+**Set up the credential first.** Under Credentials, add a **Google service
+account**: paste the *whole* JSON key file downloaded from a service account in
+a Google Cloud project with the Text-to-Speech API enabled. *Test connection*
+can only say "stored" for this type — there is no probe that can mint a Google
+token — so the first real proof is a green run of this node. A bad or expired
+key fails it by name.
+
+**The price parameter is required, and there is no default.** Text-to-Speech is
+billed per character, and a paid call reported without a cost is invisible to
+the workspace monthly budget *and* counted against its unpriced-spend block.
+Enter the rate for the voice tier you are using from
+[Google's pricing page](https://cloud.google.com/text-to-speech/pricing). No
+rate is built in on purpose: a vendor price baked into a release goes stale and
+quietly under-reports what you are spending.
+
+A few deliberate refusals, each with a named error rather than a quiet
+approximation:
+
+| It refuses | Because |
+|---|---|
+| Input over 5,000 UTF-8 bytes | Google's synchronous limit. Truncating would cut a sentence and the short would never mention it — split the beat instead. |
+| Audio formats other than WAV, MP3 and Ogg Opus | The timeline is built on an exactly measured duration, and only these three carry one. |
+| A voice that returns no caption marks | Support for `<mark>` varies by voice; Studio voices have none. A short with silently missing captions is worse than a failed step. Turn the check off if the captions are genuinely optional. |
+| Marks that run backwards or land past the end of the audio | Captions built from them would be wrong after the render, not before it. |
 
 ## Develop
 
@@ -75,23 +98,30 @@ is called `shortvideo.minimax_*`, not `shortvideo.video_generate`: a generic
 name would silently freeze one vendor's parameters. Generic nodes come only
 after two implementations prove a shared contract.
 
-**Permissions are declared when a node needs them, not before.** The manifest
-claims no `network`, no `secrets` and an empty egress allowlist today, because
-the self-test node talks to nothing. Waves 1–2 add each one alongside the node
-that uses it, so every permission in this manifest has a reviewer.
+**Permissions are declared when a node needs them, not before.** `network` and
+`secrets` arrived with the token mint that first needed them, and the egress
+allowlist names only the two hosts this plugin actually talks to. Waves 2–3 add
+each one alongside the node that uses it, so every permission in this manifest
+has a reviewer.
+
+**Durations are measured, never estimated.** Narration length is what decides
+where a beat splits, how a clip is trimmed and when a caption appears. So the
+audio format dropdown offers only containers whose playing time can be read
+exactly from the bytes, and a format that cannot be measured is refused rather
+than guessed at.
 
 ## Roadmap
 
 | Wave | Ships | Status |
 |---|---|---|
 | **0** | Plugin skeleton — manifest, entry point, contracts pin, contract tests | **done** |
-| **1** | `shortvideo.google_tts` — narration audio + caption timepoints | not started |
+| **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
 | **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | not started |
 | **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
 | **4** | Published template, attachment-aware approval, recovery | not started |
 
-`shortvideo.selftest` is scaffolding and **Wave 1 removes it**. That removal is
-safe only because nothing has been published yet — once a version is released,
+`shortvideo.selftest` was Wave 0 scaffolding and Wave 1 removed it. That was
+safe only because nothing had been published yet — once a version is released,
 a node id is a contract.
 
 Composition (Wave 3) is **self-hosted only**: curated tools are refused on

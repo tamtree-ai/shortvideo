@@ -20,9 +20,10 @@ from tamtree_sdk import PluginRefusedError
 from tamtree_shortvideo import NODES
 from tamtree_shortvideo.credentials import CREDENTIAL_TYPE
 from tamtree_shortvideo.google_auth import DEFAULT_TOKEN_URI
-from tamtree_shortvideo.nodes import CATEGORY, ICON, NODE_NAME
+from tamtree_shortvideo.google_tts import NODE_NAME, SYNTHESIZE_URL
+from tamtree_shortvideo.nodes import CATEGORY, ICON
 
-EXPECTED_NODES = {"shortvideo.selftest"}
+EXPECTED_NODES = {"shortvideo.google_tts"}
 
 PLUGIN_NAME = "shortvideo"
 
@@ -66,13 +67,17 @@ def test_nodes_declare_an_output_schema() -> None:
     for node in NODES:
         schema = node.manifest.outputs[0].output_schema
         assert schema is not None, node.manifest.name
-        assert "ok" in schema["properties"]
+        assert schema["properties"], node.manifest.name
 
 
-def test_skeleton_node_needs_no_credential() -> None:
-    """A fresh install must be able to run this node with nothing configured —
-    that is what makes it usable as an install check."""
-    assert [node.manifest.credentials for node in NODES] == [[]]
+def test_every_node_declares_the_credentials_it_uses() -> None:
+    """V0.5's self test needed none because it opened no socket. Every node
+    from V1.2 on reaches a paid API, so the palette must show the slot and the
+    engine must refuse to dispatch a step with no binding."""
+    for node in NODES:
+        assert node.manifest.credentials, node.manifest.name
+        for requirement in node.manifest.credentials:
+            assert requirement.type == CREDENTIAL_TYPE
 
 
 def test_ships_a_square_icon() -> None:
@@ -114,8 +119,8 @@ def test_the_declared_egress_matches_where_the_code_actually_talks() -> None:
     registry.discover(_entry_points)
 
     allowlist = registry.plugins()[PLUGIN_NAME].manifest.capabilities.egress_allowlist
-    assert "oauth2.googleapis.com" in allowlist
     assert DEFAULT_TOKEN_URI.split("/")[2] in allowlist
+    assert SYNTHESIZE_URL.split("/")[2] in allowlist
 
 
 def test_an_older_instance_refuses_the_plugin_at_boot() -> None:
