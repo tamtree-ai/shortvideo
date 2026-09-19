@@ -5,7 +5,13 @@ description = "Tamtree plugin: short-form video generation — narration, footag
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-dependencies = ["tamtree-plugin-sdk"]
+dependencies = [
+    "tamtree-plugin-sdk",
+    # The RS256 signer behind the `google_service_account` token mint (V1.1).
+    # A *plugin* dependency: the server ships pyjwt/cryptography of its own and
+    # those are server internals a plugin may not import (§20.2).
+    "pyjwt[crypto]>=2.9",
+]
 
 [project.optional-dependencies]
 testing = ["tamtree-plugin-sdk[testing]"]
@@ -22,6 +28,12 @@ Repository = "https://github.com/tamtree-ai/shortvideo"
 
 [project.entry-points."tamtree.nodes"]
 shortvideo = "tamtree_shortvideo:NODES"
+
+# The entry-point NAME is the credential type: this group carries data, so the
+# registry has no `.name` to read off the value and falls back to the key — and
+# refuses the boot if the two disagree.
+[project.entry-points."tamtree.credential_types"]
+google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
 
 [tool.uv.sources]
 # Sibling Tamtree checkout at ~/sites/tamtree. Swap for the git URL in README

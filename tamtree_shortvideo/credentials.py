@@ -1,0 +1,71 @@
+"""The `google_service_account` credential type — data, not code (D-G6).
+
+**Why a new type rather than reusing `google_api`.** The shipped `google_api`
+credential is an OAuth *authorization-code* credential: it carries a client id,
+a client secret and a user's refresh token, and it exists so a workspace can act
+on behalf of a person's Gmail or Sheets. A service account is the opposite
+shape — no user, no consent screen, a private key the machine signs with. Piling
+a PEM into `google_api` would make the connect flow nonsense and would hand
+every existing Google node a payload it cannot interpret.
+
+**Why one blob field rather than three.** The credential form is a plain loop
+over this spec rendering `<Input type={field.secret ? 'password' : 'text'}>`
+(`packages/frontend/src/pages/CredentialFields.tsx @ 90e82780`) — there is no
+textarea, and an `<input>` strips newlines on paste. A separate `private_key`
+field would therefore silently destroy the PEM the user pasted. The downloaded
+key *file* survives that same paste intact, because its PEM newlines are already
+`\\n`-escaped inside a JSON string. So the field that looks lazier is the only
+one that works.
+
+**Why `auth_kind="api_key"`.** `credential_auth_headers`
+(`packages/sdk/tamtree_sdk/http_client.py:34-77 @ 90e82780`) returns `{}` for an
+`api_key` credential that carries no `api_key` field, precisely because the kind
+is broader than the field — `aws_s3` and `aws_sigv4` share it and sign
+elsewhere. A service account signs elsewhere too. Only `oauth2` is ever branched
+on anywhere, so inventing a `service_account` kind would add vocabulary no
+consumer reads (§5.1).
+
+**What this type gives up, deliberately.** With no `test_url_field`, *Test
+connection* can only ever answer `"stored — add a test URL to probe live
+connectivity"` (`packages/server/tamtree_server/credentials.py:222-229`), and a
+real probe is impossible anyway because the probe builds its headers through
+`credential_auth_headers`, which cannot mint a Google token. Liveness is
+therefore proven in exactly one place: a loud, named error from the node — see
+`google_auth.ServiceAccountKeyError` and `TokenMintError`.
+"""
+
+from typing import Final
+
+from tamtree_plugin_sdk import CredentialFieldSpec, CredentialTypeSpec
+
+__all__ = ["CREDENTIAL_TYPE", "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL", "KEY_FIELD"]
+
+#: The registered type name. Must equal the entry-point name or the registry
+#: refuses the boot — one constant so the spec, the manifest, the node
+#: requirements and the tests cannot drift.
+CREDENTIAL_TYPE: Final = "google_service_account"
+
+#: The single field, named once for the same reason.
+KEY_FIELD: Final = "service_account_json"
+
+
+GOOGLE_SERVICE_ACCOUNT_CREDENTIAL: Final = CredentialTypeSpec(
+    type=CREDENTIAL_TYPE,
+    display_name="Google service account",
+    description=(
+        "The whole JSON key file downloaded from a Google Cloud service "
+        "account. Used to mint access tokens for Google Cloud APIs such as "
+        "Text-to-Speech. Grant the account the narrowest role that works, in a "
+        "project used for nothing else — the OAuth scope cannot narrow it."
+    ),
+    auth_kind="api_key",
+    fields=[
+        CredentialFieldSpec(
+            name=KEY_FIELD,
+            label="Service account key (JSON)",
+            secret=True,
+            required=True,
+            placeholder='{"type": "service_account", "project_id": "…", …}',
+        )
+    ],
+)

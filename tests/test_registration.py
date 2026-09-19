@@ -9,10 +9,17 @@ from importlib.metadata import EntryPoint
 from importlib.resources import files
 
 import pytest
-from tamtree_plugin_sdk import CONTRACTS_VERSION, GROUP_NODES, PluginRegistry
+from tamtree_plugin_sdk import (
+    CONTRACTS_VERSION,
+    GROUP_CREDENTIAL_TYPES,
+    GROUP_NODES,
+    PluginRegistry,
+)
 from tamtree_sdk import PluginRefusedError
 
 from tamtree_shortvideo import NODES
+from tamtree_shortvideo.credentials import CREDENTIAL_TYPE
+from tamtree_shortvideo.google_auth import DEFAULT_TOKEN_URI
 from tamtree_shortvideo.nodes import CATEGORY, ICON, NODE_NAME
 
 EXPECTED_NODES = {"shortvideo.selftest"}
@@ -21,7 +28,17 @@ PLUGIN_NAME = "shortvideo"
 
 
 def _entry_points() -> list[EntryPoint]:
-    return [EntryPoint(name=PLUGIN_NAME, value="tamtree_shortvideo:NODES", group=GROUP_NODES)]
+    """Every contribution this distribution makes, exactly as `pyproject.toml`
+    declares it — a test that sighted only one group would not notice a second
+    one that refuses the boot."""
+    return [
+        EntryPoint(name=PLUGIN_NAME, value="tamtree_shortvideo:NODES", group=GROUP_NODES),
+        EntryPoint(
+            name=CREDENTIAL_TYPE,
+            value="tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
+            group=GROUP_CREDENTIAL_TYPES,
+        ),
+    ]
 
 
 def test_every_node_name_matches_its_manifest() -> None:
@@ -78,15 +95,27 @@ def test_plugin_discovers_its_nodes() -> None:
 
 
 def test_claims_no_permission_it_does_not_use() -> None:
-    """The skeleton talks to nothing. Waves 1-2 add `network`/`secrets` with
-    the nodes that need them; until then an empty declaration is the honest
-    one and this test is what stops it drifting open by accident."""
+    """V1.1 is the first code here that reads a secret and opens a socket — the
+    token mint — so `secrets` and `network` arrive with it and not before. The
+    test stays as the thing that stops the declaration drifting open: `database`
+    and `filesystem` are still claims this plugin cannot make."""
     registry = PluginRegistry()
     registry.discover(_entry_points)
 
     capabilities = registry.plugins()[PLUGIN_NAME].manifest.capabilities
-    assert capabilities.permissions == []
-    assert capabilities.egress_allowlist == []
+    assert set(capabilities.permissions) == {"network", "secrets"}
+
+
+def test_the_declared_egress_matches_where_the_code_actually_talks() -> None:
+    """Boot-inventory truth, not a runtime jail (SEC-G1): nothing gates on this
+    list at run time, so its only value is being accurate for whoever reviews
+    the install."""
+    registry = PluginRegistry()
+    registry.discover(_entry_points)
+
+    allowlist = registry.plugins()[PLUGIN_NAME].manifest.capabilities.egress_allowlist
+    assert "oauth2.googleapis.com" in allowlist
+    assert DEFAULT_TOKEN_URI.split("/")[2] in allowlist
 
 
 def test_an_older_instance_refuses_the_plugin_at_boot() -> None:
