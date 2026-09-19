@@ -1,0 +1,103 @@
+# The parent that runs `generate-one-beat` once per beat — Wave 2's harness.
+#
+# This is deliberately the smallest flow that makes the loop body *runnable and
+# reviewable*: a beat list in, a clip per beat out, nothing else. The real
+# template (topic -> script -> narration -> beats -> footage -> compose ->
+# approval) is Wave 4's `Short-form video`, and it will use this same body.
+# Keeping the harness separate means the body can be exercised before the
+# script model, the narration step and the compositor exist.
+#
+# The one thing here that is not scaffolding is the Loop's error policy, and it
+# is the whole of V2.6's requirement: a failed beat must not discard successful
+# siblings.
+apiVersion: tamtree.dev/v1
+kind: Flow
+metadata:
+  name: beats-to-clips
+  display_name: Beats to clips
+spec:
+  api_version: tamtree.dev/v1
+  flow_type: pipeline
+  nodes:
+    # Test data for the editor is a beat list, because that is what Wave 4's
+    # script step will hand this:
+    #   {"beats": [{"beat_number": 1, "narration_text": "...",
+    #               "visual_prompt": "..."}, ...]}
+    - id: beats
+      type: tamtree.manual_trigger
+      position: [40.0, 160.0]
+      params: {}
+
+    - id: split_beats
+      type: tamtree.split_out
+      position: [280.0, 160.0]
+      params:
+        field: beats
+        include: no_other_fields
+
+    # One beat per pass. `batch_size: 1` is what makes a pass equal a beat:
+    # one step budget, one retry scope, one failure.
+    #
+    # `on_item_error: skip` is the requirement. A beat that fails — a content
+    # refusal, a generation that never finishes, a clip larger than the cap —
+    # goes to `failed` and the loop moves on, so four good clips are not thrown
+    # away by a fifth bad one. Each of those has already been paid for.
+    #
+    # `on_max_iterations: fail` and a cap of 25: checked BEFORE the first pass,
+    # so a shot list longer than the cap stops the run rather than silently
+    # generating the first 25 and reporting success. For a paid step, quietly
+    # doing part of the job is the worse failure.
+    - id: per_beat
+      type: tamtree.loop
+      position: [520.0, 160.0]
+      params:
+        flow_id: generate-one-beat
+        mode: for_each
+        batch_size: 1
+        max_iterations: 25
+        on_max_iterations: fail
+        on_item_error: skip
+
+    # `main` concatenates the passes that produced items, so a skipped beat
+    # simply is not in it — which is why nothing downstream may identify a beat
+    # by position. `beat_number` travels on the item for exactly this reason.
+    - id: clips
+      type: tamtree.set
+      position: [760.0, 80.0]
+      params:
+        fields:
+          status: generated
+
+    # The `status` port emits one item per pass whatever happened — its
+    # iteration, its outcome, its input and its output — and it is the only
+    # place the correlation survives. Without it "which beat is missing, and
+    # why" is not answerable downstream, because `main` has already dropped the
+    # failures and Merge appends rather than zips.
+    #
+    # Wave 4's recovery path (V4.4 — replay one failed beat without
+    # resubmitting the accepted ones) is built on this port. Here it just gets
+    # recorded, so the harness can show it.
+    - id: pass_log
+      type: tamtree.set
+      position: [760.0, 300.0]
+      params:
+        fields:
+          logged: "true"
+
+  connections:
+    - from_node: beats
+      to_node: split_beats
+    - from_node: split_beats
+      to_node: per_beat
+    - from_node: per_beat
+      to_node: clips
+    - from_node: per_beat
+      from_port: status
+      to_node: pass_log
+
+  nodes_in_order:
+    - beats
+    - split_beats
+    - per_beat
+    - clips
+    - pass_log

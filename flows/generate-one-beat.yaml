@@ -1,0 +1,172 @@
+# The loop body for one beat of a short — submit, collect, save.
+#
+# A loop body is an ordinary published pipeline that starts with a Sub-workflow
+# Trigger; a Loop node in the parent runs it once per beat. The graph stays a
+# strict DAG — iteration lives in the runtime, not in a loop-back edge.
+#
+# Publish this flow BEFORE the parent can run: a Loop resolves its body's
+# published version at plan time, and installed flows arrive as drafts (§17.9).
+#
+# WHY ONE BEAT PER PASS, and not one step fanned out over the shot list:
+#
+#   - Each beat gets its own step budget. A shot list shares nothing, so a slow
+#     fifth clip cannot time out the four that already finished.
+#   - A retry re-generates one beat instead of re-paying for all of them —
+#     which matters more here than in any other example, because the retryable
+#     step is the *poll*, and the step that would double-charge is fenced off
+#     from retries entirely (see `submit` below).
+#   - `on_item_error: skip` on the parent's Loop lands one bad beat on the
+#     `failed` output and still ships the rest. That is the whole of V2.6's
+#     "a failed beat must not discard successful siblings", and it is a
+#     property of the parent's Loop node, not of this file.
+apiVersion: tamtree.dev/v1
+kind: Flow
+metadata:
+  name: generate-one-beat
+  display_name: Generate one beat
+spec:
+  api_version: tamtree.dev/v1
+  flow_type: pipeline
+  nodes:
+    # The body's entry contract. Worth setting rather than leaving open: a
+    # beat missing `visual_prompt` then fails at the boundary naming the
+    # field, instead of as a MiniMax 4xx two nodes in — which costs a run to
+    # discover and reads like a vendor problem.
+    #
+    # `beat_number` is required for a reason that only shows up once something
+    # goes wrong: under `on_item_error: skip` a dropped beat shifts every later
+    # position, so the parent must never identify a beat by its index. The
+    # number travels with the data instead.
+    - id: start
+      type: tamtree.subworkflow_trigger
+      position: [40.0, 160.0]
+      params:
+        input_schema:
+          type: object
+          properties:
+            beat_number:
+              type: integer
+            narration_text:
+              type: string
+            visual_prompt:
+              type: string
+          required: [beat_number, visual_prompt]
+
+    # The one call in this flow that spends money, and the only step here with
+    # retries deliberately OFF.
+    #
+    # MiniMax documents no client idempotency key for create (§5.3), so a
+    # retried submit is a second charge with no way to recognise the first.
+    # The node refuses the ambiguous cases itself — a 5xx, a timeout, a dropped
+    # connection and a 2xx with no task id all raise a named, non-retryable
+    # error carrying the provider's request id — but the step's own retry
+    # setting has to agree, or the engine would re-run the activity underneath
+    # that judgement and undo it.
+    - id: submit
+      type: shortvideo.minimax_submit
+      position: [280.0, 160.0]
+      params:
+        model: MiniMax-H3
+        prompt: "{{ $json['visual_prompt'] }}"
+        duration_seconds: 6
+        resolution: 768P
+        ratio: "9:16"
+        prompt_expansion_mode: balanced
+      credentials:
+        minimax_api: minimax
+      settings:
+        # A create returns a task id in seconds; it does not wait for the clip.
+        timeout_s: 120
+        retry_on_fail: false
+
+    # The waiting half, and the opposite retry policy — on purpose. Polling a
+    # known task creates nothing and costs nothing, so there is no duplicate
+    # charge for a retry to cause, and a re-run re-queries the task for a fresh
+    # download URL rather than reusing one that has since expired.
+    #
+    # `timeout_s` must exceed `max_wait_seconds`, or the step is killed from
+    # outside while the node still believes it has time left — and the node's
+    # own message (nothing was cancelled, the clip is still billing, run this
+    # again to collect it) is the one an author needs to see.
+    - id: collect
+      type: shortvideo.minimax_collect
+      position: [520.0, 160.0]
+      params:
+        task_id: "{{ $json['task_id'] }}"
+        max_wait_seconds: 600
+        poll_interval_seconds: 5
+        max_download_megabytes: 256
+        output_binary_property: video
+        # 0 means unpriced: MiniMax publishes no per-second rate for the H3
+        # models, so this is the number on your own plan. Left at 0 the beat's
+        # billed seconds still travel in the output, but the workspace budget
+        # is blind to video spend.
+        price_usd_per_second: 0
+      credentials:
+        minimax_api: minimax
+      settings:
+        timeout_s: 660
+        retry_on_fail: true
+        max_retries: 2
+
+    # The clip is durable before the pass ends. A shot list is minutes of paid
+    # generation; a parent that crashed while holding N clips as attachments
+    # would have to buy them again.
+    - id: save_clip
+      type: tamtree.save_asset
+      position: [760.0, 160.0]
+      params:
+        name: "beat-{{ $json['beat_number'] }}-{{ $json['task_id'] }}"
+        kind: video
+        binary_property: video
+        metadata:
+          tags: [shortvideo, beat]
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # What the pass hands back. Save Asset emits the library record and nothing
+    # else — no beat fields, no attachment — so everything the parent needs is
+    # put back here, read from the nodes that still hold it.
+    #
+    # Note what does NOT need restating: `shortvideo.minimax_submit` and
+    # `minimax_collect` both layer their output over the item they were given,
+    # so the beat's own fields survive all the way to `save_clip`. Only the
+    # save drops them. Reading by `$item` is safe because `batch_size: 1` means
+    # this body always sees exactly one item, so `$item` is 0.
+    #
+    # The bytes do not cross back, and that is the deliberate half: the parent
+    # gets `asset_id` and loads the clip when it composes, which keeps a
+    # twenty-beat run from carrying twenty videos in memory to the last step.
+    - id: label_clip
+      type: tamtree.set
+      position: [1000.0, 160.0]
+      params:
+        fields:
+          beat_number: "{{ $node('start').items[$item].json['beat_number'] }}"
+          narration_text: "{{ $node('start').items[$item].json['narration_text'] }}"
+          visual_prompt: "{{ $node('start').items[$item].json['visual_prompt'] }}"
+          task_id: "{{ $node('collect').items[$item].json['task_id'] }}"
+          duration_seconds: "{{ $node('collect').items[$item].json['duration_seconds'] }}"
+          billed_seconds: "{{ $node('collect').items[$item].json['billed_seconds'] }}"
+          # Named here rather than left as Save Asset's `id`, so the parent
+          # depends on this flow's contract and not on that node's field names.
+          asset_id: "{{ $json['id'] }}"
+
+  connections:
+    - from_node: start
+      to_node: submit
+    - from_node: submit
+      to_node: collect
+    - from_node: collect
+      to_node: save_clip
+    - from_node: save_clip
+      to_node: label_clip
+
+  nodes_in_order:
+    - start
+    - submit
+    - collect
+    - save_clip
+    - label_clip
