@@ -4,9 +4,11 @@ Short-form vertical video generation for [Tamtree](https://github.com/tamtree-ai
 packaged as an installable plugin: narration, footage and composition, as nodes
 on the canvas.
 
-> **Status: Wave 2 in progress.** Narration works end to end, and footage can
-> be submitted and cancelled. Collecting the finished clip and composition are
-> not built yet. See [Roadmap](#roadmap).
+> **Status: Wave 2 complete.** Narration and footage both work end to end —
+> submit, collect, cancel — and a published flow loops one beat at a time.
+> Composition is not built yet. Every claim here is unit-proven against recorded
+> transport; nothing has yet run against a live provider key. See
+> [Roadmap](#roadmap).
 
 This is an ordinary Python package. It lives in its own repository, on its own
 release schedule, and Tamtree finds it at startup through **entry points** — no
@@ -23,7 +25,7 @@ uv pip install 'tamtree-shortvideo @ git+https://github.com/tamtree-ai/shortvide
 Restart the Tamtree server and worker. The nodes appear in the palette under
 **Files & media**.
 
-Requires a Tamtree whose SDK contracts are `>=1.33, <2` — the `[contracts] sdk`
+Requires a Tamtree whose SDK contracts are `>=1.34, <2` — the `[contracts] sdk`
 pin in `tamtree_shortvideo/tamtree-plugin.toml`. An older instance refuses the
 plugin at boot with a named error rather than half-loading it.
 
@@ -133,6 +135,46 @@ image-to-video / reference-to-video exclusion are all refused locally. HEIC and
 HEIF skip the dimension check: reading those means walking ISO-BMFF boxes, and
 MiniMax judges them instead.
 
+### Short video — MiniMax collect (`shortvideo.minimax_collect`)
+
+Takes the `task_id` from the submit step, waits for the generation to finish,
+and saves the clip as an attachment on the item.
+
+**It keeps the retry budget submit refuses.** A poll creates nothing and costs
+nothing, so an unreachable provider is safe to retry here; that asymmetry is the
+whole reason the two nodes are separate. Set `retry_on_fail: true` on this step
+and `false` on submit — the node's own judgement is not enough, because the
+engine would otherwise re-run the activity underneath it.
+
+| Param | Default | |
+|---|---|---|
+| **Give up waiting after** | 900s | The budget for the whole wait, not one poll. |
+| **First poll interval** | 5s | Grows ×1.5 up to 30s — a tight poll buys nothing on a job that takes minutes, and an unbounded gap outlives the result URL. |
+| **Refuse a clip larger than** | 256 MB | Enforced *while streaming*, so an over-size body is abandoned mid-transfer rather than buffered and then refused. |
+| **Your rate, USD per second** | `0` | See below. |
+
+**Running out of time is not a failure.** It raises `MinimaxNotReady`, which
+says the three things you need: nothing was cancelled, the clip is still
+generating and will still be billed, and re-running this step on the same id
+collects it. MiniMax keeps a task queryable for 7 days.
+
+**The container is read from the clip's magic bytes, never its `Content-Type`.**
+The failure this guards against is a CDN serving an `AccessDenied` XML page as
+`video/mp4`; saving that under a video MIME type would only move the break into
+whatever opens it next.
+
+**The API key goes to MiniMax and never to the CDN.** The result URL carries its
+own signature, so there is nothing to gain by handing a workspace secret to
+whatever host it resolves to. An expired signature (a 4xx from the CDN) stays
+retryable, because a re-run re-queries for a fresh URL.
+
+> **Cost is unpriced by default.** MiniMax publishes no per-second USD rate for
+> the H3 models, so there is no honest number to hard-code — and a node that
+> invented one would put a fabricated figure into a budget that stops people's
+> work. Left at `0`, the node reports the provider's own `usage.total_seconds`
+> but sends no `cost_usd`, and **your workspace budget is blind to video spend
+> until you supply your own contract rate.**
+
 ### Short video — MiniMax cancel (`shortvideo.minimax_cancel`)
 
 Stops a generation by task id — for an error branch, or to stop clips billing
@@ -154,6 +196,37 @@ that would be the difference between a bill you expected and one you didn't.
 It does **not** fail the step by default — a cleanup step that throws because the
 clip was already running turns one problem into two. Turn on *Fail if the task
 could not be cancelled* when you want the louder version.
+
+## Flows
+
+Two importable flows ship in `flows/`. They are Wave 2's harness, not the
+finished product — Wave 4's `Short-form video` template will use the same body.
+
+| File | |
+|---|---|
+| `generate-one-beat.yaml` | The loop body: submit → collect → save asset → relabel. Starts with a Sub-workflow Trigger, so a Loop node in the parent runs it once per beat. |
+| `beats-to-clips.yaml` | The smallest parent that makes the body runnable: a beat list in, a clip per beat out. |
+
+**Publish the body before the parent can run.** A Loop resolves its body's
+published version at plan time, and installed flows arrive as drafts.
+
+Three things in there are load-bearing rather than scaffolding:
+
+- **`on_item_error: skip` on the Loop, plus the `status` port.** "A failed beat
+  must not discard successful siblings" is a property of the *parent*, not the
+  body. The `status` port is the only place the pass/outcome correlation
+  survives — `main` drops a skipped pass entirely, and Merge appends rather than
+  zips.
+- **`retry_on_fail: false` on submit, `true` on collect.** The step setting has
+  to agree with the node, or the engine re-runs the activity underneath it. This
+  is the one place an author would actually break the submit/collect split.
+- **`timeout_s` (660) outlives `max_wait_seconds` (600),** so the step is not
+  killed from outside while the node still believes it has time left — otherwise
+  you never see the node's own message.
+
+`beat_number` travels on the item and is required by the body's input schema:
+under `on_item_error: skip` a dropped beat shifts every later index, so nothing
+downstream may identify a beat by position.
 
 ## Develop
 
@@ -221,7 +294,7 @@ than guessed at.
 |---|---|---|
 | **0** | Plugin skeleton — manifest, entry point, contracts pin, contract tests | **done** |
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
-| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **in progress** — submit, cancel and image inputs done |
+| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **done** — submit, collect, cancel, image inputs, and the published Loop body |
 | **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
 | **4** | Published template, attachment-aware approval, recovery | not started |
 
