@@ -24,7 +24,11 @@ from tamtree_shortvideo.google_tts import NODE_NAME, SYNTHESIZE_URL
 from tamtree_shortvideo.minimax import API_HOST
 from tamtree_shortvideo.nodes import CATEGORY, ICON
 
-EXPECTED_NODES = {"shortvideo.google_tts", "shortvideo.minimax_submit"}
+EXPECTED_NODES = {
+    "shortvideo.google_tts",
+    "shortvideo.minimax_submit",
+    "shortvideo.minimax_cancel",
+}
 
 EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api"}
 

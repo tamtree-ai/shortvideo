@@ -10,6 +10,7 @@ a duplicate (§5.3).
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -26,7 +27,7 @@ from tamtree_shortvideo.minimax import (
     MinimaxSubmitAmbiguous,
     MinimaxUnavailable,
 )
-from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
+from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode, _check_body_size
 
 TOKEN = "eyJ-a-real-looking-minimax-key"
 TASK_ID = "video_task_01H9Z"
@@ -429,3 +430,222 @@ async def test_submit_reports_no_usage() -> None:
     await MinimaxSubmitNode().execute(ctx)
 
     assert ctx.usage == []
+
+
+# -- image inputs (V2.5) -----------------------------------------------------
+
+
+def _with_image(name: str = "frame") -> Item:
+    """An item carrying an attachment, and a context whose binary store holds
+    real PNG bytes for it."""
+    return Item.model_validate(
+        {
+            "json": {},
+            "binary": {
+                name: {
+                    "id": "img1",
+                    "mime_type": "image/png",
+                    "size_bytes": 0,
+                    "storage_key": "ws/ws_test/binary/img1",
+                }
+            },
+        }
+    )
+
+
+async def _run_with_binary(kit: NodeTestKit, data: bytes, key: str = "ws/ws_test/binary/img1"):
+    """Seed the fake binary store, then execute. `put_binary` is the only
+    public way in, so the store is written directly — the node reads it back
+    through `get_binary`, which is the path under test."""
+    ctx = kit.context()
+    ctx._binaries[key] = data  # noqa: SLF001 — the fake has no seeding API
+    return ctx, await MinimaxSubmitNode().execute(ctx)
+
+
+async def test_an_attachment_is_inlined_as_a_data_uri() -> None:
+    """A workspace BinaryRef is not a public URL, so the bytes have to travel
+    in the request. This is V2.5's whole answer."""
+    from tests.image_fixtures import png_bytes
+
+    image = png_bytes(width=1080, height=1920)
+    kit = _kit(first_frame="frame", inputs=[_with_image()])
+
+    _ctx, _output = await _run_with_binary(kit, image)
+
+    (element,) = [e for e in _request_body(kit)["content"] if e["type"] == "image_url"]
+    assert element["role"] == "first_frame"
+    prefix, encoded = element["image_url"]["url"].split(",", 1)
+    assert prefix == "data:image/png;base64"
+    assert base64.b64decode(encoded) == image
+
+
+async def test_an_https_url_is_passed_through_untouched() -> None:
+    """The escape hatch when an image is too large to inline — and free, since
+    MiniMax fetches it itself."""
+    kit = _kit(first_frame="https://example.com/frame.png")
+
+    await kit.run()
+
+    (element,) = [e for e in _request_body(kit)["content"] if e["type"] == "image_url"]
+    assert element["image_url"]["url"] == "https://example.com/frame.png"
+
+
+async def test_an_mm_file_reference_is_passed_through() -> None:
+    kit = _kit(first_frame="mm_file://12345")
+
+    await kit.run()
+
+    (element,) = [e for e in _request_body(kit)["content"] if e["type"] == "image_url"]
+    assert element["image_url"]["url"] == "mm_file://12345"
+
+
+async def test_a_plain_http_url_is_refused() -> None:
+    """The image crosses the internet to a third party on that link."""
+    kit = _kit(first_frame="http://example.com/frame.png")
+
+    with pytest.raises(NodeConfigurationError, match="exposes it in transit"):
+        await kit.run()
+
+    assert kit.requests == []
+
+
+async def test_an_unresolvable_scheme_is_refused_by_name() -> None:
+    kit = _kit(first_frame="s3://bucket/frame.png")
+
+    with pytest.raises(NodeConfigurationError, match="MiniMax cannot resolve"):
+        await kit.run()
+
+
+async def test_a_missing_attachment_lists_what_the_item_does_carry() -> None:
+    kit = _kit(first_frame="hero", inputs=[_with_image("frame")])
+
+    with pytest.raises(NodeConfigurationError) as caught:
+        await kit.run()
+
+    message = str(caught.value)
+    assert "'hero'" in message
+    assert "it has: frame" in message
+
+
+async def test_first_and_last_frames_travel_together_in_order() -> None:
+    from tests.image_fixtures import png_bytes
+
+    item = Item.model_validate(
+        {
+            "json": {},
+            "binary": {
+                "open": {
+                    "id": "img1",
+                    "mime_type": "image/png",
+                    "size_bytes": 0,
+                    "storage_key": "ws/ws_test/binary/img1",
+                },
+                "close": {
+                    "id": "img2",
+                    "mime_type": "image/png",
+                    "size_bytes": 0,
+                    "storage_key": "ws/ws_test/binary/img2",
+                },
+            },
+        }
+    )
+    kit = _kit(first_frame="open", last_frame="close", inputs=[item])
+    ctx = kit.context()
+    ctx._binaries["ws/ws_test/binary/img1"] = png_bytes()  # noqa: SLF001
+    ctx._binaries["ws/ws_test/binary/img2"] = png_bytes()  # noqa: SLF001
+
+    output = await MinimaxSubmitNode().execute(ctx)
+
+    roles = [e["role"] for e in _request_body(kit)["content"] if e["type"] == "image_url"]
+    assert roles == ["first_frame", "last_frame"]
+    assert output["main"][0].json_["image_roles"] == ["first_frame", "last_frame"]
+
+
+async def test_reference_images_are_sent_with_their_role() -> None:
+    kit = _kit(
+        reference_images=["https://example.com/a.png", "https://example.com/b.png"],
+    )
+
+    await kit.run()
+
+    elements = [e for e in _request_body(kit)["content"] if e["type"] == "image_url"]
+    assert [e["role"] for e in elements] == ["reference_image", "reference_image"]
+
+
+async def test_reference_images_arriving_as_a_json_string_still_work() -> None:
+    kit = _kit(reference_images='["https://example.com/a.png"]')
+
+    await kit.run()
+
+    assert len([e for e in _request_body(kit)["content"] if e["type"] == "image_url"]) == 1
+
+
+async def test_mixing_a_frame_with_references_is_refused() -> None:
+    """MiniMax's one structural rule: image-to-video and reference-to-video
+    are different jobs and a request cannot ask for both."""
+    kit = _kit(
+        first_frame="https://example.com/a.png",
+        reference_images=["https://example.com/b.png"],
+    )
+
+    with pytest.raises(NodeConfigurationError) as caught:
+        await kit.run()
+
+    message = str(caught.value)
+    assert "different jobs" in message
+    assert "first frame" in message
+    assert kit.requests == []
+
+
+async def test_more_than_nine_reference_images_is_refused_locally() -> None:
+    kit = _kit(reference_images=[f"https://example.com/{n}.png" for n in range(10)])
+
+    with pytest.raises(NodeConfigurationError, match="at most 9"):
+        await kit.run()
+
+
+async def test_a_bad_image_is_refused_before_the_request() -> None:
+    """The validation in `images.py`, reached through the node: a wrong-sized
+    frame costs a validation error rather than a run."""
+    from tests.image_fixtures import png_bytes
+
+    kit = _kit(first_frame="frame", inputs=[_with_image()])
+
+    with pytest.raises(NodeConfigurationError, match="pixels on each side"):
+        await _run_with_binary(kit, png_bytes(width=100, height=100))
+
+    assert kit.requests == []
+
+
+async def test_text_only_requests_carry_no_image_element() -> None:
+    kit = _kit()
+
+    await kit.run()
+
+    assert [e["type"] for e in _request_body(kit)["content"]] == ["text"]
+    assert (await _kit().run())["main"][0].json_["image_roles"] == []
+
+
+def test_a_request_too_large_to_send_is_refused_with_the_way_out_named() -> None:
+    """Base64 adds about a third, and MiniMax caps the whole body at 64 MB.
+    Discovering that from MiniMax would mean uploading 60 MB to be told no.
+
+    Checked directly rather than through the node: one image can never trip it
+    — MiniMax's own 30 MB per-image cap encodes to about 40 MB — so the budget
+    only bites on a multi-image request, and building two 30 MB images to prove
+    it would cost more than the assertion is worth.
+    """
+    oversized = {"content": [{"type": "text", "text": "a" * (61 * 1024 * 1024)}]}
+
+    with pytest.raises(NodeConfigurationError) as caught:
+        _check_body_size(oversized)
+
+    message = str(caught.value)
+    assert "Base64 adds" in message
+    assert "https URLs" in message
+
+
+def test_a_realistic_request_is_nowhere_near_the_budget() -> None:
+    """The mirror of the test above — a budget that refused ordinary work
+    would be worse than no budget."""
+    _check_body_size({"content": [{"type": "text", "text": "a" * 10_000}]})

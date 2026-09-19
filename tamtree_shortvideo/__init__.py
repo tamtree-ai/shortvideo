@@ -7,6 +7,7 @@ from tamtree_shortvideo.credentials import (
     MINIMAX_CREDENTIAL_TYPE,
 )
 from tamtree_shortvideo.google_tts import GoogleTtsNode
+from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.nodes import NODES
 
@@ -17,5 +18,6 @@ __all__ = [
     "MINIMAX_CREDENTIAL_TYPE",
     "NODES",
     "GoogleTtsNode",
+    "MinimaxCancelNode",
     "MinimaxSubmitNode",
 ]

@@ -17,6 +17,7 @@ from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 
 from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
 from tamtree_shortvideo.google_tts import NODE_NAME, GoogleTtsNode
+from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tests.audio_fixtures import wav_bytes
 from tests.conftest import key_file_payload
@@ -103,3 +104,17 @@ def test_the_submit_node_declares_its_credential() -> None:
 
     assert requirement.type == MINIMAX_CREDENTIAL_TYPE
     assert requirement.required is True
+
+
+class TestMinimaxCancelContract(NodeContract):
+    def make_node(self) -> MinimaxCancelNode:
+        return MinimaxCancelNode()
+
+    def make_context(self) -> FakeContext:
+        return (
+            NodeTestKit(MinimaxCancelNode())
+            .params(task_id="t1", fail_if_not_cancelled=False)
+            .credentials({MINIMAX_CREDENTIAL_TYPE: {"token": "eyJ-contract-test-key"}})
+            .responses([httpx.Response(200, json={"action": "cancelled", "status": "cancelled"})])
+            .context()
+        )

@@ -13,17 +13,24 @@ rather than a billed rejection. A 400 from MiniMax costs nothing directly, but
 it costs a run, and the author reading the banner learns more from "MiniMax-H3
 accepts 4 to 15 seconds" than from `invalid_params`.
 
-**What this node does not do yet.** Image and reference inputs (`first_frame`,
-`last_frame`, `reference_image`) are V2.5: a workspace `BinaryRef` is not a
-public URL, and deciding between bounded data URIs and a vendor upload step is
-a real decision with its own size, format and egress rules. Rather than half of
-it, this node submits text-to-video and the parameters arrive with the transport
-that makes them work. `callback_url` is also absent, and stays absent: MiniMax
-callbacks require a challenge-response endpoint Tamtree does not have (§7).
+**Image inputs go as data URIs (V2.5).** A workspace `BinaryRef` is not a
+public URL, so the bytes have to travel in the request; `images.py` explains
+why a bounded data URI beat a vendor upload step for v1, and carries every
+check MiniMax would otherwise make after the fact. An https URL is accepted
+too, and is the escape hatch when an image is too large to inline.
+
+**Reference video and reference audio are not offered.** The create contract
+takes them, and this pipeline has no use for either: §3 generates footage from
+a prompt and narrates it with Wave 1's audio. Each would bring its own
+container, codec, frame-rate and duration matrix to validate, which would be
+surface with no caller. `callback_url` is absent for a different reason and
+stays absent: MiniMax callbacks require a challenge-response endpoint Tamtree
+does not have (§7).
 """
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, ClassVar, Final
 
@@ -37,6 +44,7 @@ from tamtree_plugin_sdk import (
 )
 
 from tamtree_shortvideo.credentials import MINIMAX_CREDENTIAL_TYPE
+from tamtree_shortvideo.images import MAX_REQUEST_BYTES, data_uri, validate_image
 from tamtree_shortvideo.minimax import (
     CREATE_URL,
     MAX_PROMPT_CHARACTERS,
@@ -49,7 +57,7 @@ from tamtree_shortvideo.minimax import (
     request_id,
 )
 
-__all__ = ["NODE_NAME", "MinimaxSubmitNode"]
+__all__ = ["MAX_REFERENCE_IMAGES", "NODE_NAME", "MinimaxSubmitNode"]
 
 NODE_NAME: Final = "shortvideo.minimax_submit"
 
@@ -58,6 +66,19 @@ _DEFAULT_MODEL: Final = "MiniMax-H3"
 #: The one resolution both models accept, so the default is valid whichever
 #: model the author picks first.
 _DEFAULT_RESOLUTION: Final = "768P"
+
+#: MiniMax's own ceiling on `reference_image` elements in one request.
+MAX_REFERENCE_IMAGES: Final = 9
+
+#: How much of MiniMax's 64 MB request ceiling this node will fill before it
+#: refuses. The margin is for the JSON structure and the prompt, and for the
+#: fact that a body measured here and a body counted there need not agree to
+#: the byte.
+_BODY_BUDGET_BYTES: Final = 60 * 1024 * 1024
+
+#: Schemes MiniMax resolves itself. Anything else in an image field is read as
+#: the name of a binary property on the incoming item.
+_PASSTHROUGH_SCHEMES: Final = ("https://", "mm_file://")
 
 
 def _text(value: Any) -> str:
@@ -94,6 +115,7 @@ class MinimaxSubmitNode(ProgrammaticNode):
                             "resolution": {"type": "string"},
                             "ratio": {"type": "string"},
                             "prompt": {"type": "string"},
+                            "image_roles": {"type": "array", "items": {"type": "string"}},
                             "submitted_at": {"type": "number"},
                         },
                         "required": ["task_id", "model", "duration_seconds", "resolution"],
@@ -165,6 +187,39 @@ class MinimaxSubmitNode(ProgrammaticNode):
                     ],
                 },
                 {
+                    "name": "first_frame",
+                    "label": "First frame",
+                    "type": "string",
+                    "default": "",
+                    "description": (
+                        "The image this beat starts from — the name of a binary property on "
+                        "the incoming item, or an https URL. Leave empty for text-to-video. "
+                        "Cannot be combined with reference images."
+                    ),
+                },
+                {
+                    "name": "last_frame",
+                    "label": "Last frame",
+                    "type": "string",
+                    "default": "",
+                    "description": (
+                        "The image this beat ends on, same forms as the first frame. "
+                        "Cannot be combined with reference images."
+                    ),
+                },
+                {
+                    "name": "reference_images",
+                    "label": "Reference images",
+                    "type": "json",
+                    "default": [],
+                    "description": (
+                        "Up to nine images to guide style and content — a list of binary "
+                        "property names or https URLs. MiniMax treats reference-to-video and "
+                        "image-to-video as different jobs, so these cannot be combined with "
+                        "a first or last frame."
+                    ),
+                },
+                {
                     "name": "prompt_expansion_mode",
                     "label": "Prompt expansion",
                     "type": "options",
@@ -206,14 +261,18 @@ class MinimaxSubmitNode(ProgrammaticNode):
         _check_resolution(resolution, model=model, limits=limits)
         _check_ratio(ratio)
 
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.extend(await _image_content(ctx, item))
+
         request: dict[str, Any] = {
             "model": model,
-            "content": [{"type": "text", "text": prompt}],
+            "content": content,
             "resolution": resolution,
             "duration": duration,
             "ratio": ratio,
             "extra": {"prompt_expansion_mode": expansion},
         }
+        _check_body_size(request)
 
         payload = await _create(ctx, request, headers=headers)
         task_id = payload.get("task_id") if isinstance(payload, dict) else None
@@ -237,6 +296,9 @@ class MinimaxSubmitNode(ProgrammaticNode):
             "resolution": resolution,
             "ratio": ratio,
             "prompt": prompt,
+            "image_roles": [
+                element["role"] for element in content if element.get("type") == "image_url"
+            ],
             "submitted_at": time.time(),
         }
         # Usage is deliberately not reported here: MiniMax prices a clip by the
@@ -251,6 +313,133 @@ class MinimaxSubmitNode(ProgrammaticNode):
                 "json": {**item.json_, **result},
                 "binary": item.binary or {},
             }
+        )
+
+
+async def _image_content(ctx: ExecutionContext, item: Item) -> list[dict[str, Any]]:
+    """The `content` elements for whatever images this beat carries.
+
+    Enforces MiniMax's one structural rule *before* anything is resolved: a
+    request is image-to-video or reference-to-video, never both. Discovering
+    that after base64-encoding four files would be a slow way to learn it.
+    """
+    first_frame = _text(ctx.param("first_frame", item=item)).strip()
+    last_frame = _text(ctx.param("last_frame", item=item)).strip()
+    references = _reference_list(ctx.param("reference_images", item=item))
+
+    if references and (first_frame or last_frame):
+        named = " and ".join(
+            label
+            for label, value in (("first frame", first_frame), ("last frame", last_frame))
+            if value
+        )
+        raise NodeConfigurationError(
+            f"This step sets both reference images and a {named}. MiniMax treats "
+            "image-to-video and reference-to-video as different jobs and refuses a request "
+            "that asks for both — choose which one this beat is."
+        )
+    if len(references) > MAX_REFERENCE_IMAGES:
+        raise NodeConfigurationError(
+            f"This step passes {len(references)} reference images and MiniMax accepts at most "
+            f"{MAX_REFERENCE_IMAGES}."
+        )
+
+    sources: list[tuple[str, str, str]] = []  # (role, value, label)
+    if first_frame:
+        sources.append(("first_frame", first_frame, "first frame"))
+    if last_frame:
+        sources.append(("last_frame", last_frame, "last frame"))
+    for index, value in enumerate(references):
+        sources.append(("reference_image", value, f"reference image {index + 1}"))
+
+    return [
+        {
+            "type": "image_url",
+            "role": role,
+            "image_url": {"url": await _image_url(ctx, item, value, label=label)},
+        }
+        for role, value, label in sources
+    ]
+
+
+def _reference_list(value: Any) -> list[str]:
+    """The reference list, however the `json` param arrived."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise NodeConfigurationError(
+                f"Reference images is not valid JSON (line {error.lineno}, column "
+                f'{error.colno}). It should be a list, like ["logo", "https://…/style.png"].'
+            ) from None
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise NodeConfigurationError(
+            f"Reference images must be a list and this is a {type(value).__name__}."
+        )
+    entries = []
+    for index, entry in enumerate(value):
+        if not isinstance(entry, str) or not entry.strip():
+            raise NodeConfigurationError(
+                f"Reference image {index + 1} is not a binary property name or an https URL."
+            )
+        entries.append(entry.strip())
+    return entries
+
+
+async def _image_url(ctx: ExecutionContext, item: Item, value: str, *, label: str) -> str:
+    """A URL MiniMax can resolve — passed through, or the attachment inlined.
+
+    A value MiniMax already understands goes as written. Anything else names a
+    binary property on this item, whose bytes are validated and inlined. `http`
+    is refused on its own: the image would cross the internet in the clear on
+    its way to a third party, and a host MiniMax cannot reach over TLS it
+    cannot reach at all.
+    """
+    if value.startswith(_PASSTHROUGH_SCHEMES):
+        return value
+    if value.startswith("http://"):
+        raise NodeConfigurationError(
+            f"The {label} is a plain http URL. Use https — the image travels to MiniMax over "
+            "that link, and an unencrypted one exposes it in transit."
+        )
+    if "://" in value:
+        scheme = value.split("://", 1)[0]
+        raise NodeConfigurationError(
+            f"The {label} names the scheme {scheme!r}, which MiniMax cannot resolve. Use an "
+            "https URL, an mm_file:// reference, or the name of a binary property on this item."
+        )
+
+    ref = (item.binary or {}).get(value)
+    if ref is None:
+        available = ", ".join(sorted(item.binary or {})) or "none"
+        raise NodeConfigurationError(
+            f"The {label} names the attachment {value!r}, and this item carries no such "
+            f"binary property (it has: {available}). If you meant a URL, it must start with "
+            "https://."
+        )
+    data = await ctx.get_binary(ref)
+    fmt = validate_image(data, label=label)
+    return data_uri(data, fmt)
+
+
+def _check_body_size(request: dict[str, Any]) -> None:
+    """Refuse a request too large to send, naming the way out.
+
+    Measured on the assembled body rather than summed from the parts, because
+    base64 and JSON escaping are what actually decide the number.
+    """
+    size = len(json.dumps(request).encode("utf-8"))
+    if size > _BODY_BUDGET_BYTES:
+        raise NodeConfigurationError(
+            f"This request is {size / 1024 / 1024:.1f} MB once the images are encoded, and "
+            f"MiniMax accepts at most {MAX_REQUEST_BYTES // 1024 // 1024} MB. Base64 adds "
+            "about a third to every attachment. Resize the images, send fewer, or host them "
+            "and pass https URLs instead of attachments."
         )
 
 

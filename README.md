@@ -4,9 +4,9 @@ Short-form vertical video generation for [Tamtree](https://github.com/tamtree-ai
 packaged as an installable plugin: narration, footage and composition, as nodes
 on the canvas.
 
-> **Status: Wave 2 in progress.** Narration works end to end and footage can
-> be submitted; collection and composition are not built yet. See
-> [Roadmap](#roadmap).
+> **Status: Wave 2 in progress.** Narration works end to end, and footage can
+> be submitted and cancelled. Collecting the finished clip and composition are
+> not built yet. See [Roadmap](#roadmap).
 
 This is an ordinary Python package. It lives in its own repository, on its own
 release schedule, and Tamtree finds it at startup through **entry points** — no
@@ -118,9 +118,42 @@ accepted. Those fail with a named error carrying MiniMax's `request_id`, and you
 decide whether to resubmit. This is a deliberate limit, not an oversight: **this
 plugin never claims exactly-once provider spend.**
 
-Image and reference inputs (`first_frame`, `last_frame`, `reference_image`) are
-not here yet — a workspace attachment is not a public URL, and that transport is
-its own piece of work.
+**Images travel as data URIs.** Point `first_frame`, `last_frame` or
+`reference_images` at a binary property on the incoming item and the bytes go
+inline; MiniMax caps one image at 30 MB and the whole request at 64 MB, so a
+frame pair fits comfortably even after base64's extra third. An `https://` URL
+or an `mm_file://` reference is passed through instead, which is the escape
+hatch when an image is too big to inline.
+
+Every image is checked before the request, and its format is read from the
+**bytes** rather than from the attachment's declared type — so a `.png` that is
+really something else is caught here rather than by MiniMax. Formats (JPEG, PNG,
+WEBP, HEIC, HEIF), 256–5760 px per side, aspect ratio 0.4–2.5, and the
+image-to-video / reference-to-video exclusion are all refused locally. HEIC and
+HEIF skip the dimension check: reading those means walking ISO-BMFF boxes, and
+MiniMax judges them instead.
+
+### Short video — MiniMax cancel (`shortvideo.minimax_cancel`)
+
+Stops a generation by task id — for an error branch, or to stop clips billing
+after a run fell over halfway through a shot list.
+
+One `DELETE` does three different things depending on the task's state, so this
+node reports **which** rather than returning a bare success:
+
+| Task state | What happens | `cancelled` |
+|---|---|---|
+| `queued` | Genuinely cancelled, and MiniMax does not charge | `true` |
+| `running` | **Refused.** There is no forced stop | `false` |
+| `succeeded` / `failed` | Deleted, not cancelled — whatever it generated was billed | `false` |
+
+When the clip was already running, the note reads *"local wait stopped; provider
+generation may continue and may be billed"*. It will not say "cancelled", because
+that would be the difference between a bill you expected and one you didn't.
+
+It does **not** fail the step by default — a cleanup step that throws because the
+clip was already running turns one problem into two. Turn on *Fail if the task
+could not be cancelled* when you want the louder version.
 
 ## Develop
 
@@ -188,7 +221,7 @@ than guessed at.
 |---|---|---|
 | **0** | Plugin skeleton — manifest, entry point, contracts pin, contract tests | **done** |
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
-| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **in progress** — submit done |
+| **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **in progress** — submit, cancel and image inputs done |
 | **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
 | **4** | Published template, attachment-aware approval, recovery | not started |
 

@@ -46,6 +46,8 @@ __all__ = [
     "MinimaxUnavailable",
     "ModelLimits",
     "auth_headers",
+    "body_of",
+    "cancel_url",
     "query_url",
     "raise_for_response",
     "request_id",
@@ -137,6 +139,16 @@ async def auth_headers(ctx: ExecutionContext) -> dict[str, str]:
 
 def query_url(task_id: str) -> str:
     return f"{API_HOST}/v2/query/video_generation/{task_id}"
+
+
+def cancel_url(task_id: str) -> str:
+    """Cancel and delete share one path and one verb.
+
+    Which of the two happens depends on the task's status, not on the request —
+    `queued` cancels, `succeeded`/`failed` deletes, `running` is refused — so
+    the caller is the one that has to tell the outcomes apart.
+    """
+    return f"{API_HOST}/v2/video_generation/{task_id}"
 
 
 def request_id(payload: Any, response: httpx.Response | None = None) -> str:
