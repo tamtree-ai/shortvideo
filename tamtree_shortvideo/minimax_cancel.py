@@ -45,7 +45,7 @@ from tamtree_shortvideo.minimax import (
     request_id,
 )
 
-__all__ = ["NODE_NAME", "RUNNING_NOTE", "MinimaxCancelNode"]
+__all__ = ["NODE_NAME", "RUNNING_NOTE", "MinimaxCancelNode", "delete_task"]
 
 NODE_NAME: Final = "shortvideo.minimax_cancel"
 
@@ -134,7 +134,7 @@ class MinimaxCancelNode(ProgrammaticNode):
             )
         strict = bool(ctx.param("fail_if_not_cancelled", item=item))
 
-        result = await _delete(ctx, task_id, headers=headers)
+        result = await delete_task(ctx, task_id, headers=headers)
         if strict and not result["cancelled"]:
             raise NodeConfigurationError(f"MiniMax did not cancel {task_id}: {result['note']}.")
         return Item.model_validate(
@@ -145,10 +145,14 @@ class MinimaxCancelNode(ProgrammaticNode):
         )
 
 
-async def _delete(
+async def delete_task(
     ctx: ExecutionContext, task_id: str, *, headers: dict[str, str]
 ) -> dict[str, Any]:
     """The DELETE, with each of its three outcomes told apart.
+
+    Shared rather than private: `minimax_collect` calls this too, when a
+    Tamtree run is cancelled mid-poll. One operation, one place that knows
+    which of the three things a `DELETE` did.
 
     Not routed through `raise_for_response`: a refusal here is usually the
     *expected* answer — the task was already running — and turning it into an

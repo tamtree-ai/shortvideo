@@ -27,6 +27,7 @@ from tamtree_shortvideo.nodes import CATEGORY, ICON
 EXPECTED_NODES = {
     "shortvideo.google_tts",
     "shortvideo.minimax_submit",
+    "shortvideo.minimax_collect",
     "shortvideo.minimax_cancel",
 }
 
@@ -118,7 +119,15 @@ def test_plugin_discovers_its_nodes() -> None:
 
     plugin = registry.plugins()[PLUGIN_NAME]
     assert "node" in plugin.manifest.kinds
-    assert plugin.manifest.contracts.sdk == "^1.33"
+    # A literal, so raising the floor is a deliberate edit rather than a
+    # number that drifts up with whatever SDK happens to be installed. V2.3
+    # raised it from ^1.33 for `get_bounded`, which does not exist below 1.34.
+    assert plugin.manifest.contracts.sdk == "^1.34"
+    # And the floor has to be one the SDK in this tree actually clears —
+    # pinning above what is installed would pass every test here and refuse
+    # at boot, which is the one place the mismatch is expensive.
+    major, minor = (int(part) for part in CONTRACTS_VERSION.split(".")[:2])
+    assert (major, minor) >= (1, 34)
 
 
 def test_claims_no_permission_it_does_not_use() -> None:

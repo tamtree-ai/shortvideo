@@ -18,6 +18,7 @@ from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
 from tamtree_shortvideo.google_tts import NODE_NAME, GoogleTtsNode
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
+from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tests.audio_fixtures import wav_bytes
 from tests.conftest import key_file_payload
@@ -101,6 +102,57 @@ class TestMinimaxSubmitContract(NodeContract):
 
 def test_the_submit_node_declares_its_credential() -> None:
     (requirement,) = MinimaxSubmitNode().manifest.credentials
+
+    assert requirement.type == MINIMAX_CREDENTIAL_TYPE
+    assert requirement.required is True
+
+
+class TestMinimaxCollectContract(NodeContract):
+    """Two answers, because collecting is two calls: the status check that
+    says `succeeded`, and the download of what it points at. A context that
+    stopped at the first would prove the node parses, not that it runs."""
+
+    def make_node(self) -> MinimaxCollectNode:
+        return MinimaxCollectNode()
+
+    def make_context(self) -> FakeContext:
+        return (
+            NodeTestKit(MinimaxCollectNode())
+            .params(
+                task_id="t1",
+                max_wait_seconds=60,
+                poll_interval_seconds=0.001,
+                max_download_megabytes=1,
+                output_binary_property="video",
+                price_usd_per_second=0,
+            )
+            .credentials({MINIMAX_CREDENTIAL_TYPE: {"token": "eyJ-contract-test-key"}})
+            .responses(
+                [
+                    httpx.Response(
+                        200,
+                        json={
+                            "task": {
+                                "id": "t1",
+                                "model": "MiniMax-H3",
+                                "status": "succeeded",
+                                "resolution": "768P",
+                                "duration": 6,
+                                "ratio": "9:16",
+                                "content": {"url": "https://cdn.minimax.io/t1.mp4"},
+                                "usage": {"total_seconds": 6, "output_seconds": 6},
+                            }
+                        },
+                    ),
+                    httpx.Response(200, content=b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64),
+                ]
+            )
+            .context()
+        )
+
+
+def test_the_collect_node_declares_its_credential() -> None:
+    (requirement,) = MinimaxCollectNode().manifest.credentials
 
     assert requirement.type == MINIMAX_CREDENTIAL_TYPE
     assert requirement.required is True

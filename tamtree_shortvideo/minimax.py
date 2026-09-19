@@ -42,6 +42,7 @@ __all__ = [
     "MODELS",
     "RATIOS",
     "MinimaxError",
+    "MinimaxNotReady",
     "MinimaxSubmitAmbiguous",
     "MinimaxUnavailable",
     "ModelLimits",
@@ -98,6 +99,18 @@ class MinimaxError(NodeConfigurationError):
 
     Non-retryable: the request was rejected rather than accepted, so nothing
     was created and nothing about a second identical attempt would differ.
+    """
+
+
+class MinimaxNotReady(NodeConfigurationError):
+    """The wait ran out before the task finished. Nothing failed and nothing was lost.
+
+    Non-retryable because an automatic retry would spend the step's budget
+    re-waiting the same clip with no new information — but for the opposite
+    reason to `MinimaxSubmitAmbiguous`: this one is *safe* to repeat and costs
+    nothing, it is just that repeating it on the engine's schedule is not what
+    the author asked for. The task keeps generating, keeps its id, and stays
+    queryable for 7 days, so collecting it later is a step, not a recovery.
     """
 
 
