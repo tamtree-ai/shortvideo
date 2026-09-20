@@ -46,6 +46,10 @@ __all__ = [
     "MINIMAX_CREDENTIAL_TYPE",
     "MINIMAX_DEFAULT_TEST_URL",
     "MINIMAX_TOKEN_FIELD",
+    "OPENROUTER_API_CREDENTIAL",
+    "OPENROUTER_CREDENTIAL_TYPE",
+    "OPENROUTER_DEFAULT_TEST_URL",
+    "OPENROUTER_TOKEN_FIELD",
 ]
 
 #: The registered type name. Must equal the entry-point name or the registry
@@ -139,6 +143,58 @@ MINIMAX_API_CREDENTIAL: Final = CredentialTypeSpec(
             required=False,
             default=MINIMAX_DEFAULT_TEST_URL,
             placeholder=MINIMAX_DEFAULT_TEST_URL,
+        ),
+    ],
+    test_url_field="test_url",
+)
+
+
+# -- OpenRouter (V0.2b: `openrouter_tts`) ------------------------------------
+#
+# **Why its own type rather than reusing `minimax_api`'s shape.** Same reasoning
+# as MiniMax's own type: a bearer token on a canvas holding three vendors is
+# unidentifiable by type name alone. `auth_kind="bearer"` and a field named
+# `token` are copied from that precedent for the same reason — the shipped
+# `credential_auth_headers` reads that exact field name for that exact kind
+# (`packages/sdk/tamtree_sdk/http_client.py:55-58`), and no other name
+# authenticates anything.
+#
+# **Why it can be probed.** `GET /api/v1/models` is metadata — it lists what
+# OpenRouter serves, generates nothing, and OpenRouter's own docs say a failed
+# or non-generating call is not billed. Same reasoning as MiniMax's model
+# listing, applied to a different vendor.
+
+OPENROUTER_CREDENTIAL_TYPE: Final = "openrouter_api"
+
+OPENROUTER_TOKEN_FIELD: Final = "token"
+
+OPENROUTER_DEFAULT_TEST_URL: Final = "https://openrouter.ai/api/v1/models"
+
+
+OPENROUTER_API_CREDENTIAL: Final = CredentialTypeSpec(
+    type=OPENROUTER_CREDENTIAL_TYPE,
+    display_name="OpenRouter API",
+    description=(
+        "An API key from openrouter.ai (Settings → Keys), used to synthesize "
+        "narration through Gemini 3.1 Flash TTS. Billed per token by OpenRouter's "
+        "own ledger — give this key to a project whose spend you are watching."
+    ),
+    auth_kind="bearer",
+    fields=[
+        CredentialFieldSpec(
+            name=OPENROUTER_TOKEN_FIELD,
+            label="API key",
+            secret=True,
+            required=True,
+            placeholder="sk-or-v1-…",
+        ),
+        CredentialFieldSpec(
+            name="test_url",
+            label="Test URL",
+            secret=False,
+            required=False,
+            default=OPENROUTER_DEFAULT_TEST_URL,
+            placeholder=OPENROUTER_DEFAULT_TEST_URL,
         ),
     ],
     test_url_field="test_url",

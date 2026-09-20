@@ -1,6 +1,6 @@
 [project]
 name = "tamtree-shortvideo"
-version = "0.0.1"
+version = "0.1.0"
 description = "Tamtree plugin: short-form video generation — narration, footage and composition."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -39,6 +39,7 @@ shortvideo = "tamtree_shortvideo:NODES"
 [project.entry-points."tamtree.credential_types"]
 google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
 minimax_api = "tamtree_shortvideo:MINIMAX_API_CREDENTIAL"
+openrouter_api = "tamtree_shortvideo:OPENROUTER_API_CREDENTIAL"
 
 [tool.uv.sources]
 # Sibling Tamtree checkout at ~/sites/tamtree. Swap for the git URL in README

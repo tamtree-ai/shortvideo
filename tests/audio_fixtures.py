@@ -8,7 +8,8 @@ count and the pre-skip to see the measurement follow.
 
 The three builders emit the three containers Google actually returns for the
 encodings the node offers — a WAV-wrapped `LINEAR16`, an MPEG-2 Layer III
-`MP3`, and an Ogg-wrapped `OGG_OPUS`.
+`MP3`, and an Ogg-wrapped `OGG_OPUS`. `pcm_bytes` is the fourth, headerless
+shape: what OpenRouter's `/audio/speech` returns for `openrouter_tts`.
 """
 
 from __future__ import annotations
@@ -30,6 +31,11 @@ MP3_FRAME_SECONDS: Final = MP3_SAMPLES_PER_FRAME / MP3_SAMPLE_RATE
 
 OPUS_GRANULE_RATE: Final = 48_000
 OPUS_PRE_SKIP: Final = 312
+
+
+def pcm_bytes(*, seconds: float = 0.5, sample_rate: int = 24_000) -> bytes:
+    """Silent 16-bit mono PCM of exactly `seconds`, no container at all."""
+    return b"\x00\x00" * round(sample_rate * seconds)
 
 
 def wav_bytes(*, seconds: float = 0.5, sample_rate: int = 24_000, channels: int = 1) -> bytes:

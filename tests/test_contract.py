@@ -8,20 +8,33 @@ node that cannot execute proves only that the manifest parses.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+from decimal import Decimal
 from typing import Any
 
 import httpx
+import pytest
 from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 
-from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import (
+    CREDENTIAL_TYPE,
+    MINIMAX_CREDENTIAL_TYPE,
+    OPENROUTER_CREDENTIAL_TYPE,
+)
 from tamtree_shortvideo.google_tts import NODE_NAME, GoogleTtsNode
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
-from tests.audio_fixtures import wav_bytes
+from tamtree_shortvideo.openrouter_tts import NODE_NAME as OPENROUTER_NODE_NAME
+from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tests.audio_fixtures import pcm_bytes, wav_bytes
 from tests.conftest import key_file_payload
+
+#: See `tests/test_openrouter.py` for why this has to be captured before any
+#: test monkeypatches `openrouter.asyncio.sleep`.
+_REAL_SLEEP = asyncio.sleep
 
 TOKEN = "ya29.contract-test-token"
 
@@ -170,3 +183,130 @@ class TestMinimaxCancelContract(NodeContract):
             .responses([httpx.Response(200, json={"action": "cancelled", "status": "cancelled"})])
             .context()
         )
+
+
+def _openrouter_responses(
+    *, generation_id: str = "gen-1", cost: float = 0.002
+) -> list[httpx.Response]:
+    """One `/audio/speech` answer and the generation-cost lookup behind it —
+    the two calls `text` mode makes per item."""
+    return [
+        httpx.Response(
+            200,
+            content=pcm_bytes(seconds=1.0),
+            headers={"X-Generation-Id": generation_id},
+        ),
+        httpx.Response(
+            200,
+            json={"data": {"total_cost": cost, "tokens_prompt": 3, "tokens_completion": 40}},
+        ),
+    ]
+
+
+class TestOpenRouterTtsContract(NodeContract):
+    def make_node(self) -> OpenRouterTtsNode:
+        return OpenRouterTtsNode()
+
+    def make_context(self) -> FakeContext:
+        params: dict[str, Any] = {
+            "input_mode": "text",
+            "text": "A contract test still has to say something.",
+            "voice": "Zephyr",
+            "output_binary_property": "audio",
+        }
+        return (
+            NodeTestKit(OpenRouterTtsNode())
+            .params(**params)
+            .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
+            .responses(_openrouter_responses())
+            .context()
+        )
+
+
+def test_the_openrouter_node_declares_the_credential_it_cannot_run_without() -> None:
+    (requirement,) = OpenRouterTtsNode().manifest.credentials
+
+    assert requirement.type == OPENROUTER_CREDENTIAL_TYPE
+    assert requirement.required is True
+
+
+def test_the_openrouter_manifest_and_the_module_agree_on_the_node_id() -> None:
+    assert OpenRouterTtsNode().manifest.name == OPENROUTER_NODE_NAME == "shortvideo.openrouter_tts"
+
+
+async def test_openrouter_captions_mode_stitches_exact_per_phrase_timings() -> None:
+    """The whole point of the per-phrase-call design: no provider marks, but
+    the caption timings are exact because each phrase's duration is measured,
+    not estimated — see `openrouter_tts`'s module docstring."""
+    kit = (
+        NodeTestKit(OpenRouterTtsNode())
+        .params(
+            input_mode="captions",
+            captions=["First line.", "Second line."],
+            phrase_gap_seconds=0.1,
+            voice="Zephyr",
+            output_binary_property="audio",
+        )
+        .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
+        .responses(
+            [
+                httpx.Response(
+                    200, content=pcm_bytes(seconds=1.0), headers={"X-Generation-Id": "gen-1"}
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "data": {"total_cost": 0.001, "tokens_prompt": 2, "tokens_completion": 20}
+                    },
+                ),
+                httpx.Response(
+                    200, content=pcm_bytes(seconds=0.5), headers={"X-Generation-Id": "gen-2"}
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "data": {"total_cost": 0.0007, "tokens_prompt": 2, "tokens_completion": 10}
+                    },
+                ),
+            ]
+        )
+    )
+    outputs = await kit.run()
+    (item,) = outputs["main"]
+    data = item.json_
+
+    assert data["duration_seconds"] == pytest.approx(1.6)  # 1.0 + 0.1 gap + 0.5
+    assert [mark["time_seconds"] for mark in data["marks"]] == pytest.approx([0.0, 1.1])
+    assert data["captions"][0]["end_seconds"] == pytest.approx(1.0)
+    assert data["captions"][1]["start_seconds"] == pytest.approx(1.1)
+    assert data["captions"][1]["end_seconds"] == pytest.approx(1.6)
+    assert data["usage"]["calls"] == 2
+    assert data["priced"] is True
+    assert data["cost_usd"] == str(Decimal("0.001") + Decimal("0.0007"))
+
+
+async def test_openrouter_reports_unpriced_when_the_ledger_never_catches_up(monkeypatch) -> None:
+    """A ledger that never resolves must not silently under-report as zero —
+    the call is flagged unpriced, matching `minimax_collect`'s posture."""
+    monkeypatch.setattr(
+        "tamtree_shortvideo.openrouter.asyncio.sleep", lambda seconds: _REAL_SLEEP(0)
+    )
+    kit = (
+        NodeTestKit(OpenRouterTtsNode())
+        .params(input_mode="text", text="Whatever the ledger says later.", voice="Zephyr")
+        .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
+        .responses(
+            [
+                httpx.Response(
+                    200, content=pcm_bytes(seconds=1.0), headers={"X-Generation-Id": "gen-1"}
+                ),
+                *([httpx.Response(404)] * 4),  # exhausts the bounded retry
+            ]
+        )
+    )
+    outputs = await kit.run()
+    (item,) = outputs["main"]
+    data = item.json_
+
+    assert data["priced"] is False
+    assert data["cost_usd"] == ""

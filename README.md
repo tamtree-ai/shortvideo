@@ -92,6 +92,45 @@ approximation:
 | A voice that returns no caption marks | Support for `<mark>` varies by voice; Studio voices have none. A short with silently missing captions is worse than a failed step. Turn the check off if the captions are genuinely optional. |
 | Marks that run backwards or land past the end of the audio | Captions built from them would be wrong after the render, not before it. |
 
+### Short video — OpenRouter Text-to-Speech (`shortvideo.openrouter_tts`)
+
+The alternative to `google_tts` for anyone who does not want to stand up a
+Google Cloud project: narration through **Gemini 3.1 Flash TTS**, billed
+through an OpenRouter API key instead. Same output shape
+(`duration_seconds`, `marks`, `audio`, `captions`) so the compositor cannot
+tell which node produced an item — but it gets there differently, because
+OpenRouter's `/audio/speech` endpoint has no SSML and no `<mark>` timepoints
+to lean on.
+
+Two input modes, not three — there is no SSML mode, because this provider does
+not accept SSML:
+
+| Input | For |
+|---|---|
+| **Plain text** | One block of narration, one call. Fast, but no per-phrase caption timing. |
+| **Phrase list** | One call *per phrase*, stitched together. Slower and costs one call each, but every caption timing is exact — measured from that phrase's own synthesized audio, the same way `google_tts` measures its whole clip. |
+
+Because each phrase is its own independent call rather than one continuous
+reading, it is also its own independent utterance: the prosody a single-pass
+narrator gives a mid-paragraph sentence is not what stitched-together
+one-sentence syntheses sound like. `phrase_gap_seconds` (default `0.15`)
+inserts a short silence between phrases to soften the seam — it does not
+reproduce one continuous take.
+
+**Set up the credential first.** Under Credentials, add an **OpenRouter API**
+key from [openrouter.ai](https://openrouter.ai) (Settings → Keys). Unlike the
+Google credential, this one can be tested for real — *Test connection* probes
+a model listing, which generates nothing.
+
+**Cost is read from OpenRouter's own ledger, not entered by hand.** After each
+`/audio/speech` call, the node looks up that call's `total_cost` on
+`GET /api/v1/generation`, with a short bounded retry for the ordinary race
+where the ledger has not indexed the call yet. If the ledger genuinely never
+catches up, the call is reported **unpriced** (`priced: false`, `cost_usd:
+""`) rather than guessed at zero — the audio is not thrown away over a slow
+ledger, but the workspace budget is told honestly that this call's price is
+unknown.
+
 ### Short video — MiniMax submit (`shortvideo.minimax_submit`)
 
 Starts one video generation and returns its `task_id`. It does **not** wait for
@@ -294,6 +333,7 @@ than guessed at.
 |---|---|---|
 | **0** | Plugin skeleton — manifest, entry point, contracts pin, contract tests | **done** |
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
+| **1b** | `shortvideo.openrouter_tts` — narration via Gemini 3.1 Flash TTS, no GCP account needed | **done** |
 | **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **done** — submit, collect, cancel, image inputs, and the published Loop body |
 | **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
 | **4** | Published template, attachment-aware approval, recovery | not started |

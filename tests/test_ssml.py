@@ -19,6 +19,7 @@ from tamtree_shortvideo.ssml import (
     build_ssml,
     escape_text,
     fit_phrases,
+    parse_phrases,
 )
 
 
@@ -251,3 +252,23 @@ def test_an_entry_that_is_not_text_says_which_one() -> None:
 def test_an_object_without_text_says_which_one() -> None:
     with pytest.raises(NodeConfigurationError, match="Caption 1 is an object with no 'text'"):
         build_ssml([{"name": "hook"}])
+
+
+# -- `parse_phrases`, the part `openrouter_tts` reuses with no XML at all ----
+
+
+def test_parse_phrases_agrees_with_build_ssml_on_names_and_text() -> None:
+    """The extraction D9 exists for: a second provider gets the same phrase
+    list, the same generated names, the same validation — without ever
+    rendering a `<speak>` document it has no use for."""
+    captions = ["First line.", {"text": "Second line.", "name": "beat-2"}]
+    document = build_ssml(captions)
+    phrases = parse_phrases(captions)
+
+    assert [phrase.name for phrase in phrases] == document.mark_names
+    assert [phrase.text for phrase in phrases] == [p.text for p in document.phrases]
+
+
+def test_parse_phrases_raises_the_same_named_errors() -> None:
+    with pytest.raises(NodeConfigurationError, match="Caption 2 is empty"):
+        parse_phrases(["One.", "   ", "Three."])

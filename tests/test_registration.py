@@ -18,20 +18,26 @@ from tamtree_plugin_sdk import (
 from tamtree_sdk import PluginRefusedError
 
 from tamtree_shortvideo import NODES
-from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, MINIMAX_CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import (
+    CREDENTIAL_TYPE,
+    MINIMAX_CREDENTIAL_TYPE,
+    OPENROUTER_CREDENTIAL_TYPE,
+)
 from tamtree_shortvideo.google_auth import DEFAULT_TOKEN_URI
 from tamtree_shortvideo.google_tts import NODE_NAME, SYNTHESIZE_URL
 from tamtree_shortvideo.minimax import API_HOST
 from tamtree_shortvideo.nodes import CATEGORY, ICON
+from tamtree_shortvideo.openrouter import API_HOST as OPENROUTER_API_HOST
 
 EXPECTED_NODES = {
     "shortvideo.google_tts",
+    "shortvideo.openrouter_tts",
     "shortvideo.minimax_submit",
     "shortvideo.minimax_collect",
     "shortvideo.minimax_cancel",
 }
 
-EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api"}
+EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api", OPENROUTER_CREDENTIAL_TYPE}
 
 PLUGIN_NAME = "shortvideo"
 
@@ -50,6 +56,11 @@ def _entry_points() -> list[EntryPoint]:
         EntryPoint(
             name=MINIMAX_CREDENTIAL_TYPE,
             value="tamtree_shortvideo:MINIMAX_API_CREDENTIAL",
+            group=GROUP_CREDENTIAL_TYPES,
+        ),
+        EntryPoint(
+            name=OPENROUTER_CREDENTIAL_TYPE,
+            value="tamtree_shortvideo:OPENROUTER_API_CREDENTIAL",
             group=GROUP_CREDENTIAL_TYPES,
         ),
     ]
@@ -153,6 +164,7 @@ def test_the_declared_egress_matches_where_the_code_actually_talks() -> None:
     assert DEFAULT_TOKEN_URI.split("/")[2] in allowlist
     assert SYNTHESIZE_URL.split("/")[2] in allowlist
     assert API_HOST.split("/")[2] in allowlist
+    assert OPENROUTER_API_HOST.split("/")[2] in allowlist
 
 
 def test_an_older_instance_refuses_the_plugin_at_boot() -> None:

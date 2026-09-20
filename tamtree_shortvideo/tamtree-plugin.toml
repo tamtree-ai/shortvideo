@@ -1,6 +1,6 @@
 [plugin]
 name = "shortvideo"
-version = "0.0.1"
+version = "0.1.0"
 # Every family this distribution contributes to. An undeclared kind is a boot
 # refusal, not a silent skip — `KIND_BY_GROUP` maps each entry-point group to
 # the string that must appear here.
@@ -24,6 +24,8 @@ permissions = ["network", "secrets"]
 #   oauth2.googleapis.com     — the service-account token mint (V1.1)
 #   texttospeech.googleapis.com — narration synthesis (V1.2)
 #   api.minimax.io            — video generation: create, query, cancel (V2)
+#   openrouter.ai             — narration via Gemini 3.1 Flash TTS, and the
+#                                per-call cost lookup on the same host (V0.2b)
 # Not listed, and deliberately: the finished clip is fetched from a signed,
 # time-limited URL on a MiniMax-controlled CDN whose host MiniMax does not
 # document. It is learned from a real response, and no real response has been
@@ -33,6 +35,7 @@ egress_allowlist = [
   "oauth2.googleapis.com",
   "texttospeech.googleapis.com",
   "api.minimax.io",
+  "openrouter.ai",
 ]
 
 [contracts]
@@ -53,10 +56,10 @@ sdk = "^1.34"
 # Documentation for whoever reads the boot inventory; `pyproject.toml` is what
 # the registry actually discovers, and nothing validates the two against each
 # other. Note the schema's limit: `entry_points` is `dict[str, str]`, so a
-# plugin contributing *two* credential types (this one contributes
-# `google_service_account` and `minimax_api`) cannot name both here. The
-# `pyproject.toml` group is authoritative; `tests/test_registration.py` is what
-# keeps it honest.
+# plugin contributing *three* credential types (this one contributes
+# `google_service_account`, `minimax_api` and `openrouter_api`) cannot name
+# all of them here. The `pyproject.toml` group is authoritative;
+# `tests/test_registration.py` is what keeps it honest.
 [entry_points]
 "tamtree.nodes" = "tamtree_shortvideo:NODES"
 "tamtree.credential_types" = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"

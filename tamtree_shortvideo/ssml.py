@@ -41,6 +41,7 @@ __all__ = [
     "build_ssml",
     "escape_text",
     "fit_phrases",
+    "parse_phrases",
 ]
 
 #: Escaped in text content. `>` does not strictly require it, but escaping it
@@ -148,16 +149,14 @@ def _mark_name(requested: str | None, *, index: int, prefix: str, taken: set[str
     return name
 
 
-def build_ssml(
-    captions: Sequence[Any],
-    *,
-    mark_prefix: str = "p",
-    max_bytes: int | None = None,
-) -> SsmlDocument:
-    """One `<speak>` document, one `<mark>` per phrase, in order.
+def parse_phrases(captions: Sequence[Any], *, mark_prefix: str = "p") -> list[SsmlPhrase]:
+    """Every phrase, validated and named — the part of `build_ssml` that has
+    nothing to do with XML.
 
-    `max_bytes` is checked against the finished document when given — the only
-    size that matters, since the tags count toward Google's limit too.
+    Split out so a second synthesis provider with no SSML of its own (D9's "one
+    caption vocabulary") can turn the same phrase list into the same
+    `(name, text)` pairs, get the same validation errors, and produce a caption
+    track a compositor cannot tell apart from Google's.
     """
     if not isinstance(captions, Sequence) or isinstance(captions, (str, bytes)):
         raise NodeConfigurationError(
@@ -186,7 +185,21 @@ def build_ssml(
                 text=" ".join(text.split()),
             )
         )
+    return phrases
 
+
+def build_ssml(
+    captions: Sequence[Any],
+    *,
+    mark_prefix: str = "p",
+    max_bytes: int | None = None,
+) -> SsmlDocument:
+    """One `<speak>` document, one `<mark>` per phrase, in order.
+
+    `max_bytes` is checked against the finished document when given — the only
+    size that matters, since the tags count toward Google's limit too.
+    """
+    phrases = parse_phrases(captions, mark_prefix=mark_prefix)
     document = SsmlDocument(ssml=_render(phrases), phrases=tuple(phrases))
     if max_bytes is not None and document.size_bytes > max_bytes:
         fitting = fit_phrases(captions, max_bytes=max_bytes, mark_prefix=mark_prefix)
