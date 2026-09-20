@@ -75,8 +75,9 @@ token — so the first real proof is a green run of this node. A bad or expired
 key fails it by name.
 
 **The price parameter is required, and there is no default.** Text-to-Speech is
-billed per character, and a paid call reported without a cost is invisible to
-the workspace monthly budget *and* counted against its unpriced-spend block.
+billed per character, and a paid call reported without a cost never reaches the
+workspace budget at all — not even as an unpriced call its block count could
+catch, so this step refuses to run rather than spend money nothing will record.
 Enter the rate for the voice tier you are using from
 [Google's pricing page](https://cloud.google.com/text-to-speech/pricing). No
 rate is built in on purpose: a vendor price baked into a release goes stale and
@@ -143,6 +144,14 @@ Set up a **MiniMax API** credential first (Account Management → API Keys). Unl
 the Google one, this credential can be tested for real: *Test connection* probes
 a model listing, which generates nothing.
 
+The credential also asks for **your rate in USD per generated second**, and will
+not save without one. MiniMax publishes no rate for the H3 models — pay-as-you-go
+or contact sales — so nothing is filled in for you; the number is the one on your
+plan. `0` is a permitted answer and means *I accept that these generations stay
+unpriced* (see the cost note under collect). It lives on the credential rather
+than on a step because it is a fact about the account, and because a template
+install already forces the credential slot to be filled.
+
 Duration and resolution limits differ by model and are checked **locally**, so a
 wrong value fails before it reaches a paid API:
 
@@ -190,7 +199,7 @@ engine would otherwise re-run the activity underneath it.
 | **Give up waiting after** | 900s | The budget for the whole wait, not one poll. |
 | **First poll interval** | 5s | Grows ×1.5 up to 30s — a tight poll buys nothing on a job that takes minutes, and an unbounded gap outlives the result URL. |
 | **Refuse a clip larger than** | 256 MB | Enforced *while streaming*, so an over-size body is abandoned mid-transfer rather than buffered and then refused. |
-| **Your rate, USD per second** | `0` | See below. |
+| **Override the rate, USD per second** | *(unset)* | Empty means the rate on the MiniMax credential. Fill it in only to price one step differently. See below. |
 
 **Running out of time is not a failure.** It raises `MinimaxNotReady`, which
 says the three things you need: nothing was cancelled, the clip is still
@@ -207,12 +216,20 @@ own signature, so there is nothing to gain by handing a workspace secret to
 whatever host it resolves to. An expired signature (a 4xx from the CDN) stays
 retryable, because a re-run re-queries for a fresh URL.
 
-> **Cost is unpriced by default.** MiniMax publishes no per-second USD rate for
-> the H3 models, so there is no honest number to hard-code — and a node that
+> **Cost is asked for, never assumed.** MiniMax publishes no per-second USD rate
+> for the H3 models, so there is no honest number to hard-code — a node that
 > invented one would put a fabricated figure into a budget that stops people's
-> work. Left at `0`, the node reports the provider's own `usage.total_seconds`
-> but sends no `cost_usd`, and **your workspace budget is blind to video spend
-> until you supply your own contract rate.**
+> work. The rate is therefore a **required field on the MiniMax credential**,
+> answered once per account, and this node prices the provider's own
+> `usage.total_seconds` against it.
+>
+> **`0` is allowed, and it is a real choice with a real consequence.** An
+> unpriced generation is invisible twice over: no `usage_ledger` row is written
+> at all, so the spend misses the workspace budget *and* is never counted in
+> `unpriced_calls` — which means a workspace's `unpriced_block_count` guard can
+> never fire on it, whatever it is set to. The provider's seconds still travel
+> in the output (`billed_seconds`, `priced: false`), and that is the only trace
+> left. Pick `0` only if you mean it.
 
 ### Short video — MiniMax cancel (`shortvideo.minimax_cancel`)
 

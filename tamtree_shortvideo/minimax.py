@@ -28,6 +28,7 @@ Collection has no such constraint: its input already contains a known
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Final
 
 import httpx
@@ -49,6 +50,7 @@ __all__ = [
     "auth_headers",
     "body_of",
     "cancel_url",
+    "headers_from",
     "query_url",
     "raise_for_response",
     "request_id",
@@ -133,14 +135,16 @@ class MinimaxUnavailable(RuntimeError):
     """
 
 
-async def auth_headers(ctx: ExecutionContext) -> dict[str, str]:
-    """`Authorization: Bearer …` from the bound `minimax_api` credential.
+def headers_from(payload: Mapping[str, str]) -> dict[str, str]:
+    """`Authorization: Bearer …` from an already-fetched credential payload.
 
     Built here rather than through `credential_auth_headers` because that
     function lives in the server's request path; the field it reads is the
     same one, and `credentials.py` explains why the field is called `token`.
+
+    Split from `auth_headers` for `minimax_collect`, which needs a second field
+    off the same payload — one fetch, two readings, rather than two fetches.
     """
-    payload = await ctx.credential(MINIMAX_CREDENTIAL_TYPE)
     token = (payload.get(MINIMAX_TOKEN_FIELD) or "").strip()
     if not token:
         raise NodeConfigurationError(
@@ -148,6 +152,11 @@ async def auth_headers(ctx: ExecutionContext) -> dict[str, str]:
             "the MiniMax platform (Account Management → API Keys) into the credential."
         )
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+async def auth_headers(ctx: ExecutionContext) -> dict[str, str]:
+    """The bound `minimax_api` credential, read straight into request headers."""
+    return headers_from(await ctx.credential(MINIMAX_CREDENTIAL_TYPE))
 
 
 def query_url(task_id: str) -> str:

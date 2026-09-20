@@ -21,6 +21,7 @@ from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 from tamtree_shortvideo.credentials import (
     CREDENTIAL_TYPE,
     MINIMAX_CREDENTIAL_TYPE,
+    MINIMAX_PRICE_FIELD,
     OPENROUTER_CREDENTIAL_TYPE,
 )
 from tamtree_shortvideo.google_tts import NODE_NAME, GoogleTtsNode
@@ -137,9 +138,16 @@ class TestMinimaxCollectContract(NodeContract):
                 poll_interval_seconds=0.001,
                 max_download_megabytes=1,
                 output_binary_property="video",
-                price_usd_per_second=0,
+                price_usd_per_second="",
             )
-            .credentials({MINIMAX_CREDENTIAL_TYPE: {"token": "eyJ-contract-test-key"}})
+            .credentials(
+                {
+                    MINIMAX_CREDENTIAL_TYPE: {
+                        "token": "eyJ-contract-test-key",
+                        MINIMAX_PRICE_FIELD: "0",
+                    }
+                }
+            )
             .responses(
                 [
                     httpx.Response(

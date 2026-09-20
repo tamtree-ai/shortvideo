@@ -16,6 +16,7 @@ from tamtree_shortvideo.credentials import (
     MINIMAX_API_CREDENTIAL,
     MINIMAX_CREDENTIAL_TYPE,
     MINIMAX_DEFAULT_TEST_URL,
+    MINIMAX_PRICE_FIELD,
     MINIMAX_TOKEN_FIELD,
 )
 from tamtree_shortvideo.minimax import API_HOST
@@ -51,6 +52,39 @@ def test_the_key_is_stored_as_a_secret_and_required() -> None:
 
     assert field.secret is True
     assert field.required is True
+
+
+def test_the_rate_is_required_and_has_no_default() -> None:
+    """The install-time gate. `credentials_api.py:168 @ d73c2d3e` refuses a
+    create with any required field blank — secret or not — so this is what
+    makes an operator answer the rate question before a key can be stored.
+
+    `default` must stay `None`: a default is filled in on create for a blank
+    field (`packages/sdk/tamtree_sdk/credential_types.py:33-38`), which would
+    hand back exactly the silent zero this field exists to remove."""
+    (field,) = [f for f in MINIMAX_API_CREDENTIAL.fields if f.name == MINIMAX_PRICE_FIELD]
+
+    assert field.required is True
+    assert field.default is None
+    # Not a secret: it is a commercial fact, and a password input would hide
+    # the operator's own typo from them.
+    assert field.secret is False
+    # The form renders `label` and `placeholder` and nothing else, so the
+    # label has to carry the one thing an operator cannot guess — that 0 is a
+    # permitted answer with a consequence.
+    assert "0" in field.label
+
+
+def test_the_rate_is_not_a_field_the_header_builder_can_confuse_for_the_key() -> None:
+    """A second non-secret field on a bearer credential must not change what
+    authenticates it."""
+    headers = credential_auth_headers(
+        MINIMAX_CREDENTIAL_TYPE,
+        {MINIMAX_TOKEN_FIELD: TOKEN, MINIMAX_PRICE_FIELD: "0.13"},
+        auth_kind=MINIMAX_API_CREDENTIAL.auth_kind,
+    )
+
+    assert headers == {"Authorization": f"Bearer {TOKEN}"}
 
 
 def test_it_ships_a_probe_url_so_test_connection_says_something_real() -> None:

@@ -27,7 +27,7 @@ import pytest
 from tamtree_plugin_sdk import Item, NodeConfigurationError
 from tamtree_plugin_sdk.testing import NodeTestKit
 
-from tamtree_shortvideo.credentials import MINIMAX_CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import MINIMAX_CREDENTIAL_TYPE, MINIMAX_PRICE_FIELD
 from tamtree_shortvideo.minimax import MinimaxError, MinimaxNotReady, MinimaxUnavailable
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 
@@ -73,6 +73,7 @@ def _kit(
     *,
     responses: list[httpx.Response] | None = None,
     inputs: list[Item] | None = None,
+    credential: dict[str, str] | None = None,
     **overrides: Any,
 ) -> NodeTestKit:
     kit = (
@@ -86,11 +87,21 @@ def _kit(
                 "poll_interval_seconds": 0.001,
                 "max_download_megabytes": 1,
                 "output_binary_property": "video",
-                "price_usd_per_second": 0,
+                # Unset: the rate comes off the credential unless a test
+                # overrides it, which is the shipped arrangement.
+                "price_usd_per_second": "",
                 **overrides,
             }
         )
-        .credentials({MINIMAX_CREDENTIAL_TYPE: {"token": TOKEN}})
+        .credentials(
+            {
+                MINIMAX_CREDENTIAL_TYPE: credential
+                # An account that accepts unpriced spend, deliberately — the
+                # rate field is required, and "0" is a thing somebody typed.
+                if credential is not None
+                else {"token": TOKEN, MINIMAX_PRICE_FIELD: "0"}
+            }
+        )
         .responses(
             responses or [httpx.Response(200, json=task_body()), httpx.Response(200, content=MP4)]
         )
@@ -314,9 +325,10 @@ async def test_no_task_id_is_a_configuration_error() -> None:
     assert "$json.task_id" in str(caught.value)
 
 
-async def test_a_clip_is_unpriced_unless_a_rate_is_configured() -> None:
+async def test_a_clip_is_unpriced_when_the_account_rate_is_zero() -> None:
     """MiniMax publishes no per-second USD rate for H3, so the node reports the
-    provider's seconds and refuses to invent the money."""
+    provider's seconds and refuses to invent the money. `0` on the credential
+    is how an operator says they accept that."""
     kit = _kit()
     context = kit.context()
     out = await MinimaxCollectNode().execute(context)
@@ -370,6 +382,72 @@ async def test_a_negative_rate_is_refused_rather_than_credited() -> None:
         await kit.run()
 
     assert "cannot be negative" in str(caught.value)
+
+
+async def test_the_account_rate_on_the_credential_prices_the_clip() -> None:
+    """The shipped arrangement: nobody types a rate into the step, and the clip
+    is still priced, because the credential carries the account's rate."""
+    kit = _kit(credential={"token": TOKEN, MINIMAX_PRICE_FIELD: "0.13"})
+    context = kit.context()
+    out = await MinimaxCollectNode().execute(context)
+
+    (item,) = out["main"]
+    assert item.json_["priced"] is True
+    assert item.json_["cost_usd"] == "0.78000000"
+    (usage,) = context.usage
+    assert usage["cost_usd"] == Decimal("0.78000000")
+
+
+async def test_the_step_param_overrides_the_account_rate() -> None:
+    """A flow on another plan, or a rate pinned in the YAML."""
+    kit = _kit(
+        credential={"token": TOKEN, MINIMAX_PRICE_FIELD: "0.13"},
+        price_usd_per_second=0.05,
+    )
+    out = await kit.run()
+
+    (item,) = out["main"]
+    assert item.json_["cost_usd"] == "0.30000000"
+
+
+async def test_a_credential_with_no_rate_is_refused_not_treated_as_free() -> None:
+    """The field is required on the type, so a payload without it was stored
+    before it existed. Silently reading that as 0 is exactly the default this
+    change removed."""
+    kit = _kit(credential={"token": TOKEN})
+    with pytest.raises(NodeConfigurationError) as caught:
+        await kit.run()
+
+    message = str(caught.value)
+    assert MINIMAX_PRICE_FIELD in message
+    # It has to say what to do about it, including that 0 is allowed.
+    assert "Enter 0" in message
+
+
+async def test_a_nonsense_rate_on_the_credential_names_where_it_came_from() -> None:
+    kit = _kit(credential={"token": TOKEN, MINIMAX_PRICE_FIELD: "cheap"})
+    with pytest.raises(NodeConfigurationError) as caught:
+        await kit.run()
+
+    assert "credential" in str(caught.value)
+    assert "must be a number" in str(caught.value)
+
+
+async def test_a_zero_on_the_step_still_means_unpriced_over_a_real_account_rate() -> None:
+    """`0` as an override is a number somebody typed, not an absent one — it
+    has to win over the credential, or the override could not turn pricing off
+    for a step that is being run on somebody else's account."""
+    kit = _kit(
+        credential={"token": TOKEN, MINIMAX_PRICE_FIELD: "0.13"},
+        price_usd_per_second=0,
+    )
+    context = kit.context()
+    out = await MinimaxCollectNode().execute(context)
+
+    (item,) = out["main"]
+    assert item.json_["priced"] is False
+    (usage,) = context.usage
+    assert usage["cost_usd"] is None
 
 
 async def test_the_beats_own_json_and_binaries_travel_with_the_clip() -> None:

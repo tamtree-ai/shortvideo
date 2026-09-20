@@ -97,11 +97,10 @@ spec:
         poll_interval_seconds: 5
         max_download_megabytes: 256
         output_binary_property: video
-        # 0 means unpriced: MiniMax publishes no per-second rate for the H3
-        # models, so this is the number on your own plan. Left at 0 the beat's
-        # billed seconds still travel in the output, but the workspace budget
-        # is blind to video spend.
-        price_usd_per_second: 0
+        # No rate here on purpose: it comes off the `minimax_api` credential,
+        # where it is required and answered once for the account. Set this only
+        # to price one step differently — another plan, or a rate pinned in the
+        # flow itself.
       credentials:
         minimax_api: minimax
       settings:

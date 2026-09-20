@@ -29,11 +29,29 @@ is abandoned mid-transfer rather than buffered and then refused.
 a clip by the seconds it actually produced, and that figure arrives here, on
 the finished task, which is why `minimax_submit` reports no usage at all. But
 MiniMax publishes no per-second USD rate for the H3 models — pay-as-you-go or
-contact sales — so there is no honest number to hard-code. `price_usd_per_second`
-therefore defaults to `0`, meaning *unpriced*: the provider's own seconds are
-always reported in the output, and a `cost_usd` reaches the ledger only once
-an operator has told this node their contract rate. A node that invented a
-rate would put a fabricated number in a budget that stops people's work.
+contact sales — so there is no honest number to hard-code, and a node that
+invented one would put a fabricated figure in a budget that stops people's
+work.
+
+**So the rate is asked for instead of assumed, on the credential.** It is a
+fact about the account the key belongs to, so `minimax_api` carries it as a
+required field (`credentials.py`), and this node reads it off the same payload
+that authenticates the call. `price_usd_per_second` remains as a *param*, but
+it now defaults to unset and means "override the credential for this step" —
+for a flow that runs on a different plan, or one whose rate an operator wants
+pinned in the YAML.
+
+**A rate of `0` is still a legitimate answer** — pay-as-you-go accounts have no
+contract number — but it is now one somebody chose rather than one they were
+given. That matters more than the original default admitted: an unpriced
+generation is invisible *twice*. `_price_usage` drops a record carrying no
+tokens and no cost before it ever reaches the ledger
+(`packages/engine/tamtree_engine/activities/pipeline.py:891-894 @ d73c2d3e`),
+and `UNPRICED_PREDICATE` then excludes the resulting NULL-source row from
+`unpriced_calls` too (`packages/server/tamtree_server/cost_bands.py:48-52 @
+d73c2d3e`) — so a workspace's `unpriced_block_count` guard can never fire on
+video spend, whatever it is set to. Reporting the provider's own seconds in the
+output, which this node always does, is the only trace left.
 """
 
 from __future__ import annotations
@@ -41,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, ClassVar, Final
 
@@ -55,12 +74,12 @@ from tamtree_plugin_sdk import (
     get_bounded,
 )
 
-from tamtree_shortvideo.credentials import MINIMAX_CREDENTIAL_TYPE
+from tamtree_shortvideo.credentials import MINIMAX_CREDENTIAL_TYPE, MINIMAX_PRICE_FIELD
 from tamtree_shortvideo.minimax import (
     MinimaxError,
     MinimaxNotReady,
     MinimaxUnavailable,
-    auth_headers,
+    headers_from,
     query_url,
     raise_for_response,
     request_id,
@@ -200,15 +219,16 @@ class MinimaxCollectNode(ProgrammaticNode):
                 },
                 {
                     "name": "price_usd_per_second",
-                    "label": "Your rate, in USD per generated second",
+                    "label": "Override the rate, in USD per generated second",
                     "type": "number",
-                    "default": 0,
                     "description": (
-                        "Left at 0 the clip is reported as unpriced: the seconds MiniMax "
-                        "billed still appear in the output, but no cost reaches the "
-                        "workspace budget, which is then blind to video spend. There is no "
-                        "honest default — MiniMax publishes no per-second rate for the H3 "
-                        "models, so the number is the one on your own plan."
+                        "Leave this empty and the rate comes from the MiniMax credential, "
+                        "where it was set once for the whole account. Fill it in only to "
+                        "price this step differently — a flow running on another plan, or "
+                        "a rate you want pinned in the flow itself. 0 here reports the clip "
+                        "as unpriced: MiniMax's own seconds still appear in the output, but "
+                        "no cost reaches the workspace budget and none is counted against "
+                        "its unpriced-spend guard either."
                     ),
                 },
             ],
@@ -217,13 +237,23 @@ class MinimaxCollectNode(ProgrammaticNode):
     )
 
     async def execute(self, ctx: ExecutionContext) -> dict[str, list[Item]]:
-        headers = await auth_headers(ctx)
+        # One credential fetch for the whole step: the payload carries both the
+        # token that authenticates the poll and the rate that prices the clip.
+        credential = await ctx.credential(MINIMAX_CREDENTIAL_TYPE)
+        headers = headers_from(credential)
+        account_rate = _credential_rate(credential)
         outputs: list[Item] = []
         for item in ctx.input_items() or [Item()]:
-            outputs.append(await self._collect(ctx, item, headers))
+            outputs.append(await self._collect(ctx, item, headers, account_rate))
         return {"main": outputs}
 
-    async def _collect(self, ctx: ExecutionContext, item: Item, headers: dict[str, str]) -> Item:
+    async def _collect(
+        self,
+        ctx: ExecutionContext,
+        item: Item,
+        headers: dict[str, str],
+        account_rate: Decimal,
+    ) -> Item:
         task_id = str(ctx.param("task_id", item=item) or "").strip()
         if not task_id:
             raise NodeConfigurationError(
@@ -240,7 +270,7 @@ class MinimaxCollectNode(ProgrammaticNode):
         binary_property = (
             str(ctx.param("output_binary_property", item=item) or "").strip() or "video"
         )
-        rate = _rate(ctx.param("price_usd_per_second", item=item))
+        rate = _rate(ctx.param("price_usd_per_second", item=item), account_rate)
 
         task, polls, waited = await _poll(
             ctx, task_id, headers=headers, budget=budget, interval=interval
@@ -521,19 +551,46 @@ def _positive(value: Any, default: float, label: str) -> float:
     return number
 
 
-def _rate(value: Any) -> Decimal:
+def _rate(value: Any, account_rate: Decimal) -> Decimal:
+    """The param's override, or the account's rate when the param is unset.
+
+    Empty means *unset*, not zero — zero is a rate somebody typed, and the two
+    have to stay distinguishable or the override could never be left out.
+    """
     if value is None or value == "":
-        return Decimal(0)
-    try:
-        rate = Decimal(str(value))
-    except Exception as error:  # noqa: BLE001 - Decimal raises InvalidOperation, not ValueError
+        return account_rate
+    return _decimal(value, source="price_usd_per_second on this step")
+
+
+def _credential_rate(payload: Mapping[str, str]) -> Decimal:
+    """The account rate off the `minimax_api` credential.
+
+    Required on the credential type, so a missing one means a payload stored
+    before that field existed — named here rather than silently treated as 0,
+    because "unpriced" must always be a choice somebody made.
+    """
+    raw = payload.get(MINIMAX_PRICE_FIELD)
+    if raw is None or str(raw).strip() == "":
         raise NodeConfigurationError(
-            f"price_usd_per_second must be a number, not {value!r}."
-        ) from error
+            f"The {MINIMAX_CREDENTIAL_TYPE!r} credential has no "
+            f"{MINIMAX_PRICE_FIELD!r}. Open the credential and enter the per-second "
+            "rate on your MiniMax plan, so video spend reaches the workspace budget. "
+            "Enter 0 if your plan has no fixed rate and you accept that these "
+            "generations stay invisible to the budget and to its unpriced-spend guard."
+        )
+    return _decimal(
+        raw, source=f"{MINIMAX_PRICE_FIELD} on the {MINIMAX_CREDENTIAL_TYPE} credential"
+    )
+
+
+def _decimal(value: Any, *, source: str) -> Decimal:
+    try:
+        rate = Decimal(str(value).strip())
+    except Exception as error:  # noqa: BLE001 - Decimal raises InvalidOperation, not ValueError
+        raise NodeConfigurationError(f"{source} must be a number, not {value!r}.") from error
     if rate < 0:
         raise NodeConfigurationError(
-            f"price_usd_per_second cannot be negative, and {rate} is. Leave it at 0 to "
-            "report the clip as unpriced."
+            f"{source} cannot be negative, and {rate} is. Use 0 to report the clip as unpriced."
         )
     return rate
 

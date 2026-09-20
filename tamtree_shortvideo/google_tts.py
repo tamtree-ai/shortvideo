@@ -12,11 +12,23 @@ that the field — not the audio — is what pins it.
 **Why a price parameter rather than a built-in rate table.** §7 is explicit:
 "No vendor price is copied into runtime defaults. Rates and terms age." But
 §5.2's decision is equally explicit that every paid node must report a real
-`cost_usd`, because a call reported without one is both invisible to the
-workspace budget and counted against `unpriced_block_count`. The only way to
-honour both is to make the rate an input the operator fills in from Google's
-own pricing page — and to refuse the call when it is missing, *before* any
-money is spent, rather than quietly synthesizing an unpriced request.
+`cost_usd`. The only way to honour both is to make the rate an input the
+operator fills in from Google's own pricing page — and to refuse the call when
+it is missing, *before* any money is spent, rather than quietly synthesizing an
+unpriced request.
+
+**And an unpriced call is worse off than "counted as unpriced".** This node's
+refusal used to be justified by `unpriced_block_count` catching what it let
+through. It would not: a `report_usage` record with no tokens and no cost is
+dropped before the ledger (`packages/engine/tamtree_engine/activities/
+pipeline.py:891-894 @ d73c2d3e`), and the NULL-source row that results is then
+excluded from `unpriced_calls` as well (`packages/server/tamtree_server/
+cost_bands.py:48-52 @ d73c2d3e`). Nothing downstream would ever see the spend.
+That makes the refusal *more* load-bearing, not less — it is the only guard
+there is. `minimax_collect` reaches the same end by a different route, because
+Google publishes a rate an operator can look up and MiniMax does not: there,
+the rate is required on the credential and `0` is an answer somebody has to
+choose.
 
 **What the node refuses to guess.** Three things, each a named error: an input
 over the documented 5,000-byte synchronous limit (truncating narration mid-
@@ -371,9 +383,10 @@ class GoogleTtsNode(ProgrammaticNode):
                     "description": (
                         "The rate for the voice tier you are using, from "
                         "https://cloud.google.com/text-to-speech/pricing. Required: an "
-                        "unpriced paid call is invisible to the workspace budget. No rate is "
-                        "built in, because vendor prices age and a stale default would "
-                        "under-report real spend."
+                        "unpriced paid call reaches the workspace budget as nothing at all "
+                        "— not even as an unpriced call — so this step refuses to run "
+                        "without it. No rate is built in, because vendor prices age and a "
+                        "stale default would under-report real spend."
                     ),
                 },
                 {
@@ -621,9 +634,9 @@ def _price(ctx: ExecutionContext, item: Item) -> Decimal:
         raise NodeConfigurationError(
             "Set 'Price per 1M characters (USD)' for the voice tier you are using — see "
             "https://cloud.google.com/text-to-speech/pricing. Text-to-Speech is billed per "
-            "character, and a paid call reported without a cost is both invisible to the "
-            "workspace monthly budget and counted against its unpriced-spend block. No rate "
-            "is built in on purpose: a vendor price baked into a release goes stale and "
+            "character, and a paid call reported without a cost never reaches the workspace "
+            "budget at all — not even as an unpriced call its block count could catch. No "
+            "rate is built in on purpose: a vendor price baked into a release goes stale and "
             "quietly under-reports what you are spending."
         )
     return Decimal(str(value))

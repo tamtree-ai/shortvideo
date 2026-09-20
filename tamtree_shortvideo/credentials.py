@@ -45,6 +45,7 @@ __all__ = [
     "MINIMAX_API_CREDENTIAL",
     "MINIMAX_CREDENTIAL_TYPE",
     "MINIMAX_DEFAULT_TEST_URL",
+    "MINIMAX_PRICE_FIELD",
     "MINIMAX_TOKEN_FIELD",
     "OPENROUTER_API_CREDENTIAL",
     "OPENROUTER_CREDENTIAL_TYPE",
@@ -118,6 +119,32 @@ MINIMAX_TOKEN_FIELD: Final = "token"
 #: a different MiniMax region.
 MINIMAX_DEFAULT_TEST_URL: Final = "https://api.minimax.io/v1/models"
 
+#: The per-second rate this account is charged, carried on the credential
+#: rather than on the node.
+#:
+#: **Why the credential and not a node param.** It is a fact about the account
+#: the key belongs to, not about one step in one flow: an operator types it
+#: once, and every `minimax_collect` on the canvas prices against it. The
+#: template importer already forces the credential slot to be filled, and the
+#: five slot kinds it resolves — credentials, models, plugins, MCP, knowledge
+#: (`packages/server/tamtree_server/templates_api.py:699-734 @ d73c2d3e`) —
+#: contain no seam for a param value, so this is the only install-time gate
+#: that exists without core work.
+#:
+#: **Why required, and why `0` is still an answer.** Left to a default, an
+#: unpriced generation is invisible twice over: `_price_usage` drops a record
+#: with no tokens and no cost outright
+#: (`packages/engine/tamtree_engine/activities/pipeline.py:891-894 @ d73c2d3e`),
+#: so no ledger row is written, and `UNPRICED_PREDICATE` then excludes the
+#: NULL-source row from `unpriced_calls` as well
+#: (`packages/server/tamtree_server/cost_bands.py:48-52 @ d73c2d3e`). A
+#: workspace's `unpriced_block_count` guard can therefore never fire on video
+#: spend. MiniMax still publishes no rate for the H3 models, so this cannot
+#: demand a *correct* number — what it demands is a deliberate one. The field
+#: is required and has no default, so it cannot be skipped; `0` is accepted and
+#: means "I know this bills and I accept it being unpriced".
+MINIMAX_PRICE_FIELD: Final = "price_usd_per_second"
+
 
 MINIMAX_API_CREDENTIAL: Final = CredentialTypeSpec(
     type=MINIMAX_CREDENTIAL_TYPE,
@@ -125,7 +152,8 @@ MINIMAX_API_CREDENTIAL: Final = CredentialTypeSpec(
     description=(
         "An API key from the MiniMax platform (Account Management → API Keys), "
         "used to generate video clips. Video generation is billed per second of "
-        "output — give this key to a project whose spend you are watching."
+        "output — give this key to a project whose spend you are watching, and "
+        "tell the rate field below what that second costs you."
     ),
     auth_kind="bearer",
     fields=[
@@ -135,6 +163,20 @@ MINIMAX_API_CREDENTIAL: Final = CredentialTypeSpec(
             secret=True,
             required=True,
             placeholder="eyJhbGciOi…",
+        ),
+        CredentialFieldSpec(
+            # The label carries the whole explanation because the credential
+            # form renders exactly two things per row — `label` and
+            # `placeholder` (`packages/frontend/src/pages/CredentialFields.tsx`
+            # @ d73c2d3e). There is nowhere else for it to go, and a required
+            # field nobody can interpret is worse than no field.
+            name=MINIMAX_PRICE_FIELD,
+            label="USD per generated second (0 = accept unpriced spend)",
+            secret=False,
+            required=True,
+            # No `default`: one would be filled in on create for a blank field
+            # and would defeat the requirement this field exists to impose.
+            placeholder="e.g. 0.13 — the rate on your MiniMax plan",
         ),
         CredentialFieldSpec(
             name="test_url",
