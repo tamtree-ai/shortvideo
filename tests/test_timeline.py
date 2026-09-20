@@ -49,7 +49,7 @@ def _clip(index: int, *, seconds: float, pad: int = 0) -> Clip:
     """A clip long enough for its beat, with a tail left over for a crossfade."""
     played = seconds - pad / FPS
     return Clip(
-        ref_id=f"clip-{index}",
+        ref_id=f"bin_01J8XK{index}CLIP",
         mime_type="video/mp4",
         source_duration_seconds=played + 1.0,
         in_seconds=0.0,
@@ -87,7 +87,7 @@ def _timeline(
     return Timeline(
         template=template,  # type: ignore[arg-type]
         narration=Narration(
-            ref_id="narration",
+            ref_id="bin_01J8XKNARR",
             mime_type="audio/wav",
             duration_seconds=start / FPS,
         ),
@@ -385,14 +385,16 @@ def test_an_unknown_clip_audio_policy_is_refused() -> None:
 
 
 def test_a_music_bed_shorter_than_the_video_is_refused_because_v1_does_not_loop() -> None:
-    timeline = _timeline(music=Music(ref_id="music", mime_type="audio/mpeg", duration_seconds=5.0))
+    short = Music(ref_id="bin_01J8XKMUSIC", mime_type="audio/mpeg", duration_seconds=5.0)
+    timeline = _timeline(music=short)
 
     with pytest.raises(TimelineError, match="does not loop"):
         validate(timeline)
 
 
 def test_a_music_bed_that_covers_the_video_is_accepted() -> None:
-    validate(_timeline(music=Music(ref_id="music", mime_type="audio/mpeg", duration_seconds=60.0)))
+    covering = Music(ref_id="bin_01J8XKMUSIC", mime_type="audio/mpeg", duration_seconds=60.0)
+    validate(_timeline(music=covering))
 
 
 def test_narration_must_be_a_format_wave_one_actually_produces() -> None:
@@ -468,7 +470,7 @@ def test_changing_one_caption_changes_the_digest() -> None:
 
 def test_changing_a_ref_changes_the_digest() -> None:
     timeline = _timeline()
-    swapped = replace(timeline, narration=replace(timeline.narration, ref_id="other"))
+    swapped = replace(timeline, narration=replace(timeline.narration, ref_id="bin_01J8XKOTHER"))
 
     assert timeline_digest(swapped) != timeline_digest(timeline)
 
@@ -496,7 +498,7 @@ def test_a_float_that_differs_below_the_rounding_floor_hashes_the_same() -> None
 
 def test_a_round_trip_through_json_preserves_every_field() -> None:
     timeline = _timeline(
-        music=Music(ref_id="music", mime_type="audio/mpeg", duration_seconds=60.0),
+        music=Music(ref_id="bin_01J8XKMUSIC", mime_type="audio/mpeg", duration_seconds=60.0),
         clip_audio="duck",
     )
     timeline = _with_transition(timeline, 1, Transition(kind="crossfade", frames=8))
@@ -537,8 +539,12 @@ def test_the_render_document_carries_paths_and_never_a_ref() -> None:
         "clip-002.mp4",
     ]
     assert all("ref" not in beat["clip"] for beat in document["beats"])
-    # No workspace-side identifier survives into the file the child reads.
-    assert timeline.beats[0].clip.ref_id not in json.dumps(document)
+    # No workspace-side identifier survives into the file the child reads. The fixture ref ids are
+    # deliberately opaque, the way real BinaryRef ids are: an id that looked like `clip-0` would be
+    # a substring of `clip-000.mp4` and this check would pass on the path alone.
+    serialized = json.dumps(document)
+    for ref_id in _paths(timeline):
+        assert ref_id not in serialized
 
 
 def test_the_render_document_carries_the_mix_constants_and_the_digest() -> None:
@@ -555,7 +561,7 @@ def test_the_render_document_carries_the_mix_constants_and_the_digest() -> None:
 def test_a_reference_with_no_materialized_file_is_refused() -> None:
     timeline = _timeline()
     paths = _paths(timeline)
-    del paths["clip-1"]
+    del paths["bin_01J8XK1CLIP"]
 
     with pytest.raises(TimelineError, match="no materialized file"):
         render_document(timeline, paths)
