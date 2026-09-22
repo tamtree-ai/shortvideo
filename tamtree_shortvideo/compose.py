@@ -108,6 +108,25 @@ class WorkspaceRenderGate:
             yield
 
 
+def _last_line(error: str | None) -> str:
+    """The part of a runtime error an author can act on.
+
+    The runtime reports a failed render as `curated render failed: ` plus the
+    last 600 characters of the child's stderr — and Remotion writes an object
+    dump there before the renderer gets its turn. `tamtree-remotion-render`
+    guarantees its final stderr line is one sentence (`src/report.mjs`), so the
+    last line is the sentence and everything above it is noise to an author.
+    An error with no such tail — a timeout, a size cap, a hosted refusal — is
+    one line already and passes through unchanged.
+    """
+    text = (error or "unknown error").strip()
+    prefix, marker, tail = text.partition("curated render failed: ")
+    if not marker:
+        return text
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    return f"{prefix}{marker}{lines[-1]}" if lines else text
+
+
 def materialized_name(index: int, ref: BinaryRef) -> str:
     """The workdir-relative path `CuratedCliToolRuntime` will materialize
     `inputs[index]` to.
@@ -389,7 +408,7 @@ class ComposeNode(ProgrammaticNode):
             )
 
         if not result.ok:
-            raise RuntimeError(f"Short video compose failed: {result.error}")
+            raise RuntimeError(f"Short video compose failed: {_last_line(result.error)}")
         rendered = (result.binary or {}).get("video")
         if rendered is None:
             raise RuntimeError("Short video compose: the render produced no output attachment")

@@ -62,6 +62,7 @@ src/args.mjs                      strict argv parsing (no Remotion import — te
 src/document.mjs                  the render document, re-validated at the sandbox edge
 src/media-server.mjs              loopback file server for the workdir
 src/render.mjs                    selectComposition + renderMedia
+src/report.mjs                    a failed render, reduced to one actionable sentence
 src/Root.tsx                      the two compositions, sized from the document
 src/Short.tsx                     beats, trim/pad, crossfades, the audio mix
 src/Captions.tsx                  the caption band, inside the frozen safe area

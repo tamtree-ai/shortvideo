@@ -241,3 +241,42 @@ describe('serveMedia', () => {
     }
   });
 });
+
+describe('failureSentence', () => {
+  test('keeps the first line that is not a stack frame', async () => {
+    const {failureSentence} = await import('../src/report.mjs');
+    const error = new Error(
+      'Error decoding frame: invalid data found\n    at Compositor.run (index.mjs:16260:18)\n    at next',
+    );
+    assert.equal(failureSentence(error), 'Error decoding frame: invalid data found');
+  });
+
+  test('skips a message that opens with a frame', async () => {
+    const {failureSentence} = await import('../src/report.mjs');
+    assert.equal(failureSentence({message: '  at x (y.mjs:1:1)\nEFBIG: file too large'}), 'EFBIG: file too large');
+  });
+
+  test("prefers the child process's own complaint over the wrapper's", async () => {
+    const {failureSentence} = await import('../src/report.mjs');
+    const error = Object.assign(new Error('Command failed with exit code 1: /opt/x/ffprobe -v error /tmp/a.mp4'), {
+      stderr: '[mov,mp4 @ 0x1] moov atom not found\n/tmp/remotion-assets/4946.mp4: Invalid data found when processing input',
+    });
+    assert.equal(failureSentence(error), 'Invalid data found when processing input');
+  });
+
+  test('finds the complaint once Remotion has re-thrown it as a plain Error', async () => {
+    const {failureSentence} = await import('../src/report.mjs');
+    const error = new Error(
+      'Command failed with exit code 1: /opt/x/ffprobe -v error /tmp/a.mp4\n' +
+        '[mov,mp4 @ 0x1] moov atom not found\n' +
+        '/tmp/remotion-assets/4946.mp4: Invalid data found when processing input\n' +
+        '    at makeError (error.js:60:11)',
+    );
+    assert.equal(failureSentence(error), 'Invalid data found when processing input');
+  });
+
+  test('bounds a runaway line', async () => {
+    const {failureSentence} = await import('../src/report.mjs');
+    assert.equal(failureSentence(new Error('x'.repeat(1000))).length, 300);
+  });
+});

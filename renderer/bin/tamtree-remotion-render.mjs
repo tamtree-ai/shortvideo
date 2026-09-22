@@ -8,12 +8,13 @@
 import {UsageError} from '../src/args.mjs';
 import {DocumentError} from '../src/document.mjs';
 import {render} from '../src/render.mjs';
+import {failureSentence} from '../src/report.mjs';
 
 try {
   const result = await render(process.argv.slice(2));
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } catch (error) {
   const known = error instanceof UsageError || error instanceof DocumentError;
-  process.stderr.write(`${known ? error.message : `render failed: ${error?.message ?? error}`}\n`);
+  process.stderr.write(`${known ? error.message : `render failed: ${failureSentence(error)}`}\n`);
   process.exit(1);
 }

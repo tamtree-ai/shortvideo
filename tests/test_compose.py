@@ -434,6 +434,22 @@ async def test_a_timeline_that_is_not_json_is_a_configuration_error() -> None:
         await _run(ctx)
 
 
+async def test_a_failed_render_shows_the_renderer_s_sentence_not_remotion_s_dump() -> None:
+    """V3.5: the runtime's 600-character stderr tail opened mid-object-dump
+    (`failed: true,`) — the sentence was there, last, and unreadable."""
+    tail = (
+        "  stderr: 'moov atom not found',\n  failed: true,\n  timedOut: false\n}\n"
+        "render failed: Invalid data found when processing input"
+    )
+    runtime = _RecordingRuntime(ok=False, error=f"curated render failed: {tail}")
+    with pytest.raises(RuntimeError) as caught:
+        await _run(_ctx(runtime=runtime))
+    assert str(caught.value) == (
+        "Short video compose failed: curated render failed: "
+        "render failed: Invalid data found when processing input"
+    )
+
+
 async def test_a_failed_render_carries_the_runtime_s_own_sentence() -> None:
     runtime = _RecordingRuntime(ok=False, error="curated render exceeded its 900s time limit")
     with pytest.raises(RuntimeError, match="900s time limit"):
