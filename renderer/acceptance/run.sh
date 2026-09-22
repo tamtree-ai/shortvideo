@@ -36,4 +36,7 @@ docker build -q \
   --build-arg VIDEO_IMAGE="$video" \
   -t tamtree-video-acceptance "$here" >/dev/null
 
-docker run --rm --user root --cap-add SYS_ADMIN --cap-add NET_ADMIN --memory 2g tamtree-video-acceptance
+# --pids-limit: the container runs as root, and RLIMIT_NPROC does not bind
+# root (tamtree#13). A runaway fork must hit the container's cgroup, not the
+# Docker VM — an uncapped root fork bomb wedged Docker Desktop once already.
+docker run --rm --user root --cap-add SYS_ADMIN --cap-add NET_ADMIN --memory 2g --pids-limit 1024 tamtree-video-acceptance
