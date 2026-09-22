@@ -86,9 +86,12 @@ to prove.
 **Integrated loudness normalization.** The document carries `target_lufs` and
 `true_peak_ceiling_dbtp`, and they describe normalization applied to the
 narration **upstream** — a browser cannot measure integrated loudness, and a
-renderer that pretended to would produce a number nobody could trust. What it
-does honour is every *relative* level: the clip-audio policy (`mute` / `duck` /
-`keep`) and the music duck.
+renderer that pretended to would produce a number nobody could trust. Upstream
+is concrete: `shortvideo.compose` runs every audio track through the plugin's
+`shortvideo-audio` backend (ffmpeg `loudnorm`, single-pass, ±~1 LU) before it
+calls this renderer, so the narration and music files it is handed are already
+at target. What the renderer honours itself is every *relative* level: the
+clip-audio policy (`mute` / `duck` / `keep`) and the music duck.
 
 **Sidechain ducking.** v1's narration runs the length of the video, so "ducked
 whenever narration plays" and "ducked throughout" are the same mix. The attack

@@ -292,6 +292,17 @@ named in the error rather than discovered inside a browser.
 Everything it refuses, it refuses **before fetching a byte** — D9's promise is
 about cost, and it is only true if nothing expensive happens first.
 
+**Loudness is applied before the render, by a second backend.** A browser
+cannot measure integrated loudness, so the frozen targets — narration at
+**−16 LUFS** with a **−1.5 dBTP** true-peak ceiling, music at **−20 LUFS** —
+are applied by `shortvideo-audio`, a curated backend this plugin contributes
+beside `remotion`. It runs the worker's own ffmpeg (`TAMTREE_FFMPEG_BIN`, else
+`PATH` — the same one `tamtree.media` needs) under every default sandbox
+control. It is single-pass `loudnorm`, which lands within roughly **±1 LU** of
+target on speech; the true-peak ceiling is enforced either way. If ffmpeg is
+missing the step fails — it does not render at whatever level the provider
+delivered.
+
 **Concurrency is capped per worker process, not per deployment.** At most one
 render per workspace runs at a time on a given worker (raise it with
 `TAMTREE_SHORTVIDEO_MAX_RENDERS`); a burst waits for a slot rather than
@@ -301,7 +312,8 @@ of RSS and ~1.7 cores per concurrent render.**
 
 The renderer itself lives in [`renderer/`](renderer/) and has its own README,
 including why there is a loopback web server inside it and what it deliberately
-does not do (integrated loudness normalization, sidechain ducking).
+does not do (integrated loudness — applied upstream, above — and sidechain
+ducking).
 
 ## Flows
 

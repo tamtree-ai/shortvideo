@@ -14,8 +14,10 @@ non-monotonic marks, overlaps, unsupported codecs and a duration above the v1
 ceiling *before spawning Chrome*" is a promise about cost, and it is only true
 if nothing expensive happens first. Then refs are resolved — all of them, so a
 timeline naming an attachment this run never produced fails at the ref rather
-than three layers down inside a browser. Only then is the render document
-built, and only then does anything spawn.
+than three layers down inside a browser. Then each audio track is brought to
+its §7 loudness target by the `shortvideo-audio` backend — the one thing the
+renderer cannot do. Only then is the render document built, and only then does
+Chrome spawn.
 
 **The concurrency gate is per worker process, and this file will not call it
 anything else.** At most `TAMTREE_SHORTVIDEO_MAX_RENDERS` (default 1) renders
@@ -47,8 +49,12 @@ from tamtree_plugin_sdk import (
     ToolSpec,
 )
 
+from tamtree_shortvideo import loudness
 from tamtree_shortvideo.remotion import BACKEND_ID, PRESET_NAME, RENDER_MEMORY_MB
 from tamtree_shortvideo.timeline import (
+    MUSIC_TARGET_LUFS,
+    NARRATION_TARGET_LUFS,
+    NARRATION_TRUE_PEAK_DBTP,
     TimelineError,
     render_document,
     timeline_digest,
@@ -252,6 +258,44 @@ class ComposeNode(ProgrammaticNode):
             )
         return found
 
+    async def _normalise(
+        self, ctx: ExecutionContext, ref: BinaryRef, *, track: str, target_lufs: float
+    ) -> BinaryRef:
+        """One audio track, brought to §7's integrated-loudness target by the
+        `shortvideo-audio` backend. The renderer cannot measure integrated
+        loudness, so this is where the frozen numbers are actually applied —
+        and a failure here fails the step rather than rendering at whatever
+        level the provider happened to deliver."""
+        result = await ctx.run_tool(
+            ToolSpec(
+                id=f"loudnorm:{ctx.node_id}:{track}",
+                kind="curated",
+                entrypoint=loudness.BACKEND_ID,
+            ),
+            {
+                "backend": loudness.BACKEND_ID,
+                "preset": loudness.PRESET_NAME,
+                # §7 states one true-peak ceiling, for narration; a music bed
+                # gets the same one, since nothing is gained by letting the
+                # bed peak higher than the voice over it.
+                "params": {
+                    "target_lufs": target_lufs,
+                    "true_peak_dbtp": NARRATION_TRUE_PEAK_DBTP,
+                },
+                "inputs": [ref.model_dump(mode="json")],
+            },
+        )
+        if not result.ok:
+            raise RuntimeError(
+                f"Short video compose could not normalise the {track} loudness: {result.error}"
+            )
+        normalised = (result.binary or {}).get("audio")
+        if normalised is None:
+            raise RuntimeError(
+                f"Short video compose: loudness normalisation of the {track} produced no audio"
+            )
+        return normalised
+
     async def execute(self, ctx: ExecutionContext) -> dict[str, list[Item]]:
         document = self._timeline_document(ctx)
 
@@ -274,6 +318,21 @@ class ComposeNode(ProgrammaticNode):
             ordered_ids.append(timeline.music.ref_id)
         ordered_ids.extend(beat.clip.ref_id for beat in timeline.beats)
         refs = self._resolve_refs(ctx, set(ordered_ids))
+
+        # 2b. Apply §7's integrated-loudness targets to every audio track.
+        #     After validation and ref resolution — so a bad timeline still
+        #     costs nothing — and before the render, which can honour relative
+        #     levels but cannot measure an absolute one.
+        refs[timeline.narration.ref_id] = await self._normalise(
+            ctx,
+            refs[timeline.narration.ref_id],
+            track="narration",
+            target_lufs=NARRATION_TARGET_LUFS,
+        )
+        if timeline.music is not None:
+            refs[timeline.music.ref_id] = await self._normalise(
+                ctx, refs[timeline.music.ref_id], track="music", target_lufs=MUSIC_TARGET_LUFS
+            )
 
         # 3. Rename on the way in. The child never learns an original file name
         #    or a ref id — and the deterministic suffix is what lets the render

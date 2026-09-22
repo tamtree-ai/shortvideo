@@ -10,6 +10,7 @@ from tamtree_shortvideo.credentials import (
     OPENROUTER_CREDENTIAL_TYPE,
 )
 from tamtree_shortvideo.google_tts import GoogleTtsNode
+from tamtree_shortvideo.loudness import BACKEND as AUDIO_BACKEND
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
@@ -18,6 +19,7 @@ from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
 from tamtree_shortvideo.remotion import BACKEND as REMOTION_BACKEND
 
 __all__ = [
+    "AUDIO_BACKEND",
     "CREDENTIAL_TYPE",
     "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
     "MINIMAX_API_CREDENTIAL",

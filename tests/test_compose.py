@@ -19,6 +19,7 @@ every ref id beside them.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from typing import Any
 
@@ -31,6 +32,7 @@ from tamtree_shortvideo.timeline import (
     Beat,
     Caption,
     Clip,
+    Music,
     Narration,
     Timeline,
     Transition,
@@ -93,15 +95,31 @@ def _ref(ref_id: str, *, mime: str, name: str) -> BinaryRef:
 
 
 class _RecordingRuntime:
-    """A `ToolRuntime` that records the call and returns a rendered mp4. The
-    sandbox is not under test here; what the node *asked for* is."""
+    """A `ToolRuntime` that records each call and answers it the way its backend
+    would — a normalised wav from `shortvideo-audio`, a rendered mp4 from
+    `remotion`. The sandbox is not under test here; what the node *asked for* is.
+
+    `calls` holds renders only and `loudness_calls` the normalisation passes,
+    so a test about the render never has to count its way past the audio."""
 
     name = "curated"
 
-    def __init__(self, *, ok: bool = True, error: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ok: bool = True,
+        error: str | None = None,
+        audio_ok: bool = True,
+        audio_error: str | None = None,
+    ) -> None:
         self.calls: list[tuple[ToolSpec, dict[str, Any]]] = []
+        self.loudness_calls: list[tuple[ToolSpec, dict[str, Any]]] = []
+        #: Every call, both backends, in the order the node made them.
+        self.order: list[str] = []
         self._ok = ok
         self._error = error
+        self._audio_ok = audio_ok
+        self._audio_error = audio_error
         self.concurrent = 0
         self.peak = 0
 
@@ -115,6 +133,19 @@ class _RecordingRuntime:
         limits: Any,
         binary_store: Any = None,
     ) -> ToolResult:
+        self.order.append(input["backend"])
+        if input["backend"] == "shortvideo-audio":
+            self.loudness_calls.append((tool, input))
+            if not self._audio_ok:
+                return ToolResult(ok=False, output=None, error=self._audio_error, duration_ms=1)
+            ref = await binary_store.put_binary(b"RIFF normalised", "audio/wav", "output.wav")
+            return ToolResult(
+                ok=True,
+                output={"backend": "shortvideo-audio", "preset": "loudnorm"},
+                error=None,
+                duration_ms=210,
+                binary={"audio": ref},
+            )
         self.calls.append((tool, input))
         self.concurrent += 1
         self.peak = max(self.peak, self.concurrent)
@@ -145,6 +176,10 @@ def _ctx(
     binary: dict[str, BinaryRef] = {}
     if attachments:
         binary[NARRATION_ID] = _ref(NARRATION_ID, mime="audio/wav", name="narration-final.wav")
+        if timeline.music is not None:
+            binary[timeline.music.ref_id] = _ref(
+                timeline.music.ref_id, mime=timeline.music.mime_type, name="bed.mp3"
+            )
         for beat in timeline.beats:
             binary[beat.clip.ref_id] = _ref(
                 beat.clip.ref_id, mime="video/mp4", name=f"minimax-{beat.clip.ref_id}.mp4"
@@ -279,6 +314,65 @@ async def test_the_output_attachment_can_be_renamed() -> None:
     assert "final_cut" in (result["main"][0].binary or {})
 
 
+# --- loudness: §7's numbers, applied before the render ----------------------
+
+
+async def test_narration_is_normalised_to_the_frozen_target_before_the_render() -> None:
+    """The renderer cannot measure integrated loudness, so if this pass did not
+    happen nothing would apply §7 — and the render would still look green."""
+    runtime = _RecordingRuntime()
+    await _run(_ctx(runtime=runtime))
+    assert runtime.order == ["shortvideo-audio", "remotion"]
+    tool, sent = runtime.loudness_calls[0]
+    assert tool.entrypoint == "shortvideo-audio"
+    assert sent["preset"] == "loudnorm"
+    assert sent["params"] == {"target_lufs": -16.0, "true_peak_dbtp": -1.5}
+    assert [ref["id"] for ref in sent["inputs"]] == [NARRATION_ID]
+
+
+async def test_the_render_gets_the_normalised_narration_not_the_original() -> None:
+    """Written against the ref id rather than the file name, because the node
+    renames both to `narration.wav` — a name check would pass on either."""
+    runtime = _RecordingRuntime()
+    ctx = _ctx(runtime=runtime)
+    await _run(ctx)
+    _, sent = runtime.calls[0]
+    narration = sent["inputs"][1]
+    assert narration["file_name"] == "narration.wav"
+    assert narration["id"] != NARRATION_ID
+    assert await ctx.get_binary(BinaryRef.model_validate(narration)) == b"RIFF normalised"
+
+
+async def test_a_music_bed_gets_its_own_pass_at_its_own_target() -> None:
+    timeline = _timeline()
+    music_id = "bin_01J8XKMUSIC"
+    timeline = dataclasses.replace(
+        timeline,
+        music=Music(ref_id=music_id, mime_type="audio/mpeg", duration_seconds=60.0),
+    )
+    runtime = _RecordingRuntime()
+    await _run(_ctx(timeline, runtime=runtime))
+
+    targets = {sent["inputs"][0]["id"]: sent["params"] for _, sent in runtime.loudness_calls}
+    assert targets == {
+        NARRATION_ID: {"target_lufs": -16.0, "true_peak_dbtp": -1.5},
+        music_id: {"target_lufs": -20.0, "true_peak_dbtp": -1.5},
+    }
+    _, sent = runtime.calls[0]
+    music = sent["inputs"][2]
+    assert music["file_name"] == "music.wav"  # the normalised wav, renamed
+    assert music["id"] != music_id
+
+
+async def test_a_failed_normalisation_fails_the_step_and_nothing_renders() -> None:
+    """Rendering at whatever level the provider delivered would be the silent
+    version of this failure — the one §7 exists to prevent."""
+    runtime = _RecordingRuntime(audio_ok=False, audio_error="ffmpeg is not installed")
+    with pytest.raises(RuntimeError, match="normalise the narration loudness.*not installed"):
+        await _run(_ctx(runtime=runtime))
+    assert runtime.calls == []
+
+
 # --- what it refuses, and how early ----------------------------------------
 
 
@@ -295,6 +389,7 @@ async def test_an_invalid_timeline_is_refused_before_anything_is_fetched() -> No
     with pytest.raises(NodeConfigurationError):
         await _run(ctx)
     assert runtime.calls == []
+    assert runtime.loudness_calls == []
 
 
 async def test_a_ref_no_item_carries_is_named_rather_than_missing_later() -> None:
@@ -302,6 +397,7 @@ async def test_a_ref_no_item_carries_is_named_rather_than_missing_later() -> Non
     with pytest.raises(NodeConfigurationError, match="bin_01J8XK1CLIP"):
         await _run(_ctx(runtime=runtime, attachments=False))
     assert runtime.calls == []
+    assert runtime.loudness_calls == []
 
 
 async def test_a_blank_timeline_with_no_item_says_so() -> None:

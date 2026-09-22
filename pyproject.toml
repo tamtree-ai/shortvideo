@@ -42,6 +42,7 @@ shortvideo = "tamtree_shortvideo:NODES"
 # a boot where the two disagree.
 [project.entry-points."tamtree.curated_backends"]
 remotion = "tamtree_shortvideo:REMOTION_BACKEND"
+shortvideo-audio = "tamtree_shortvideo:AUDIO_BACKEND"
 
 [project.entry-points."tamtree.credential_types"]
 google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
