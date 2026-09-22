@@ -1,5 +1,6 @@
 """Tamtree short-video plugin — narration, footage and composition for vertical shorts."""
 
+from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.credentials import (
     CREDENTIAL_TYPE,
     GOOGLE_SERVICE_ACCOUNT_CREDENTIAL,
@@ -14,6 +15,7 @@ from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.nodes import NODES
 from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tamtree_shortvideo.remotion import BACKEND as REMOTION_BACKEND
 
 __all__ = [
     "CREDENTIAL_TYPE",
@@ -21,8 +23,10 @@ __all__ = [
     "MINIMAX_API_CREDENTIAL",
     "MINIMAX_CREDENTIAL_TYPE",
     "NODES",
+    "REMOTION_BACKEND",
     "OPENROUTER_API_CREDENTIAL",
     "OPENROUTER_CREDENTIAL_TYPE",
+    "ComposeNode",
     "GoogleTtsNode",
     "MinimaxCancelNode",
     "MinimaxCollectNode",

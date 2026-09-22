@@ -36,6 +36,13 @@ shortvideo = "tamtree_shortvideo:NODES"
 # The entry-point NAME is the credential type: this group carries data, so the
 # registry has no `.name` to read off the value and falls back to the key — and
 # refuses the boot if the two disagree.
+# D11: the per-tool half of a curated CLI tool. The entry-point NAME must equal
+# the backend's own `id` — the registry keys this family on `id` (it is what
+# `ToolSpec.entrypoint` carries and what every error message names) and refuses
+# a boot where the two disagree.
+[project.entry-points."tamtree.curated_backends"]
+remotion = "tamtree_shortvideo:REMOTION_BACKEND"
+
 [project.entry-points."tamtree.credential_types"]
 google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
 minimax_api = "tamtree_shortvideo:MINIMAX_API_CREDENTIAL"

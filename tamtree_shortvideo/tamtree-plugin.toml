@@ -4,7 +4,7 @@ version = "0.1.0"
 # Every family this distribution contributes to. An undeclared kind is a boot
 # refusal, not a silent skip — `KIND_BY_GROUP` maps each entry-point group to
 # the string that must appear here.
-kinds = ["node", "credential_type"]
+kinds = ["node", "credential_type", "curated_backend"]
 license = "Apache-2.0"
 publisher = "tamtree-community"
 homepage = "https://github.com/tamtree-ai/shortvideo"
@@ -51,7 +51,19 @@ egress_allowlist = [
 # `get_bounded` — a per-call size cap with every SSRF and redirect control
 # untouched — and this plugin is its first caller. The floor moves because
 # `get_bounded` does not exist below it, not as housekeeping.
-sdk = "^1.34"
+#
+# Raised 1.34 -> 1.36 by V3.2, and again for something that does not exist
+# below it. 1.35.0 made the curated-tool contract reachable from outside the
+# monorepo (`CuratedBackend`/`Preset` in the SDK, the
+# `tamtree.curated_backends` group) — without it this distribution could only
+# contribute a renderer by importing `tamtree_nodes.curated`, an unversioned
+# server-side module. 1.36.0 added `MediaLimits.limit_address_space`, which
+# `RemotionBackend` sets to False: `RLIMIT_AS` caps virtual address space, and
+# a browser reserves ~6 TB of it, so under the previous contract the render
+# child died during Node's startup on every worker. Neither is optional for
+# this plugin — they are the two things that make `shortvideo.compose`
+# possible at all.
+sdk = "^1.36"
 
 # Documentation for whoever reads the boot inventory; `pyproject.toml` is what
 # the registry actually discovers, and nothing validates the two against each
@@ -63,3 +75,4 @@ sdk = "^1.34"
 [entry_points]
 "tamtree.nodes" = "tamtree_shortvideo:NODES"
 "tamtree.credential_types" = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
+"tamtree.curated_backends" = "tamtree_shortvideo:REMOTION_BACKEND"

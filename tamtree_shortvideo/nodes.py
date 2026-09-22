@@ -16,6 +16,7 @@ from typing import Final
 
 from tamtree_plugin_sdk import Node
 
+from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.google_tts import GoogleTtsNode
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
@@ -35,4 +36,5 @@ NODES: Final[list[Node]] = [
     MinimaxSubmitNode(),
     MinimaxCollectNode(),
     MinimaxCancelNode(),
+    ComposeNode(),
 ]

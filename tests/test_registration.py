@@ -35,6 +35,7 @@ EXPECTED_NODES = {
     "shortvideo.minimax_submit",
     "shortvideo.minimax_collect",
     "shortvideo.minimax_cancel",
+    "shortvideo.compose",
 }
 
 EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api", OPENROUTER_CREDENTIAL_TYPE}
@@ -94,11 +95,23 @@ def test_nodes_declare_an_output_schema() -> None:
         assert schema["properties"], node.manifest.name
 
 
+#: Nodes that legitimately need no credential, and why — an allowlist rather
+#: than a relaxed rule, so the next node that forgets its slot still fails.
+#: `shortvideo.compose` renders locally through the curated runtime: it opens
+#: no socket, reaches no vendor, and has nothing to authenticate to.
+NODES_WITHOUT_CREDENTIALS = {"shortvideo.compose"}
+
+
 def test_every_node_declares_the_credentials_it_uses() -> None:
     """V0.5's self test needed none because it opened no socket. Every node
-    from V1.2 on reaches a paid API, so the palette must show the slot and the
-    engine must refuse to dispatch a step with no binding."""
+    that reaches a paid API must show the slot in the palette, so the engine
+    refuses to dispatch a step with no binding."""
     for node in NODES:
+        if node.manifest.name in NODES_WITHOUT_CREDENTIALS:
+            assert not node.manifest.credentials, (
+                f"{node.manifest.name} is listed as needing no credential but declares one"
+            )
+            continue
         assert node.manifest.credentials, node.manifest.name
         for requirement in node.manifest.credentials:
             assert requirement.type in EXPECTED_CREDENTIAL_TYPES
@@ -132,8 +145,11 @@ def test_plugin_discovers_its_nodes() -> None:
     assert "node" in plugin.manifest.kinds
     # A literal, so raising the floor is a deliberate edit rather than a
     # number that drifts up with whatever SDK happens to be installed. V2.3
-    # raised it from ^1.33 for `get_bounded`, which does not exist below 1.34.
-    assert plugin.manifest.contracts.sdk == "^1.34"
+    # raised it from ^1.33 for `get_bounded`, which does not exist below 1.34;
+    # V3.2 raised it again to ^1.36 for the curated-backend contract (1.35.0)
+    # and `MediaLimits.limit_address_space` (1.36.0), neither of which exists
+    # below it.
+    assert plugin.manifest.contracts.sdk == "^1.36"
     # And the floor has to be one the SDK in this tree actually clears —
     # pinning above what is installed would pass every test here and refuse
     # at boot, which is the one place the mismatch is expensive.

@@ -4,11 +4,14 @@ Short-form vertical video generation for [Tamtree](https://github.com/tamtree-ai
 packaged as an installable plugin: narration, footage and composition, as nodes
 on the canvas.
 
-> **Status: Wave 2 complete.** Narration and footage both work end to end —
+> **Status: Wave 3 in progress.** Narration and footage work end to end —
 > submit, collect, cancel — and a published flow loops one beat at a time.
-> Composition is not built yet. Every claim here is unit-proven against recorded
-> transport; nothing has yet run against a live provider key. See
-> [Roadmap](#roadmap).
+> **Composition landed as `shortvideo.compose`** (V3.2/V3.3): the timeline
+> contract, the curated `remotion` backend and the render executable are all
+> here. What is not here yet is the **image** that carries the renderer —
+> until V3.4 builds it, a worker reports the tool as unavailable rather than
+> rendering. Every claim here is unit-proven against recorded transport;
+> nothing has yet run against a live provider key. See [Roadmap](#roadmap).
 
 This is an ordinary Python package. It lives in its own repository, on its own
 release schedule, and Tamtree finds it at startup through **entry points** — no
@@ -25,9 +28,13 @@ uv pip install 'tamtree-shortvideo @ git+https://github.com/tamtree-ai/shortvide
 Restart the Tamtree server and worker. The nodes appear in the palette under
 **Files & media**.
 
-Requires a Tamtree whose SDK contracts are `>=1.34, <2` — the `[contracts] sdk`
+Requires a Tamtree whose SDK contracts are `>=1.36, <2` — the `[contracts] sdk`
 pin in `tamtree_shortvideo/tamtree-plugin.toml`. An older instance refuses the
-plugin at boot with a named error rather than half-loading it.
+plugin at boot with a named error rather than half-loading it. The floor is
+1.36 because the two things `shortvideo.compose` is built on do not exist below
+it: the curated-backend contract in the SDK (1.35.0) and
+`MediaLimits.limit_address_space` (1.36.0), without which a browser-based
+renderer cannot start at all.
 
 ## Nodes
 
@@ -253,6 +260,49 @@ It does **not** fail the step by default — a cleanup step that throws because 
 clip was already running turns one problem into two. Turn on *Fail if the task
 could not be cancelled* when you want the louder version.
 
+### Short video — compose (`shortvideo.compose`)
+
+Renders one **TimelineV1** document — narration, per-beat footage, captions and
+transitions — to a 1080×1920 mp4. **Self-hosted only:** it runs a local
+renderer in the shared subprocess sandbox, which hosted multi-tenant does not
+support (SEC-D3), and the step is refused there before it reads an input.
+
+It needs the **video render image**, which carries `tamtree-remotion-render`,
+the pre-built compositions, Chrome Headless Shell and the caption font. Without
+it the step reports the tool as unavailable on this worker rather than failing
+a render.
+
+| Param | Default | |
+|---|---|---|
+| **Timeline** | *(blank)* | The document to render. Blank reads `{{ $json.timeline }}` from the incoming item, which is what the template wires. |
+| **Draft quality** | off | Renders at half size (540×960) for the approval preview. The *same* composition and the same frame boundaries — scale is the only difference, which is what makes approving the draft and rendering the final one decision. |
+| **Output attachment name** | `video` | What the finished mp4 is returned under. |
+
+Every clip and the narration must reach this step as an **attachment**; the
+timeline names them by `BinaryRef` id, and an id no incoming item carries is
+named in the error rather than discovered inside a browser.
+
+| It refuses | Because |
+|---|---|
+| A timeline that disagrees with itself — a gap between beats, a total that does not match, a caption outside its beat | The frame math is re-derived, never trusted. A document taken on faith renders as a plausible *wrong* video, which is the one failure worse than an error. |
+| A crossfade longer than the outgoing clip's kept tail | A transition is paid for out of the tail the trim left. One the clip cannot pay for is caught at validation, not discovered at render. |
+| Captions on `short-plain`, or a beat without one on `short-captioned` | Otherwise the two templates would be indistinguishable in the timeline and different only in output. |
+| A clip or narration in a format the pipeline does not produce | Named, with the type, rather than handed to a decoder. |
+
+Everything it refuses, it refuses **before fetching a byte** — D9's promise is
+about cost, and it is only true if nothing expensive happens first.
+
+**Concurrency is capped per worker process, not per deployment.** At most one
+render per workspace runs at a time on a given worker (raise it with
+`TAMTREE_SHORTVIDEO_MAX_RENDERS`); a burst waits for a slot rather than
+failing. This is *not* tenant fairness — a second worker has its own gate and
+knows nothing about this one. Size a worker with the measured figure: **~880 MB
+of RSS and ~1.7 cores per concurrent render.**
+
+The renderer itself lives in [`renderer/`](renderer/) and has its own README,
+including why there is a loopback web server inside it and what it deliberately
+does not do (integrated loudness normalization, sidechain ducking).
+
 ## Flows
 
 Two importable flows ship in `flows/`. They are Wave 2's harness, not the
@@ -352,7 +402,7 @@ than guessed at.
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
 | **1b** | `shortvideo.openrouter_tts` — narration via Gemini 3.1 Flash TTS, no GCP account needed | **done** |
 | **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **done** — submit, collect, cancel, image inputs, and the published Loop body |
-| **3** | `shortvideo.compose` — Remotion composition behind a curated backend | not started |
+| **3** | `shortvideo.compose` — Remotion composition behind a curated backend | **node, backend and renderer done** — the image that carries them (V3.4) and the negative security suite (V3.5) are next |
 | **4** | Published template, attachment-aware approval, recovery | not started |
 
 `shortvideo.selftest` was Wave 0 scaffolding and Wave 1 removed it. That was

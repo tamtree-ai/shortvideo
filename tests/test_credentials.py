@@ -104,5 +104,7 @@ def test_one_distribution_carries_both_contributions() -> None:
     )
 
     plugin = registry.plugins()[PLUGIN_NAME]
-    assert set(plugin.manifest.kinds) == {"node", "credential_type"}
+    # `curated_backend` joined them in V3.2 — one install carries the nodes,
+    # the credential types they need, and the renderer backend compose runs.
+    assert set(plugin.manifest.kinds) == {"node", "credential_type", "curated_backend"}
     assert CREDENTIAL_TYPE in registry.credential_types()
