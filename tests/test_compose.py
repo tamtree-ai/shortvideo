@@ -41,6 +41,14 @@ from tamtree_shortvideo.timeline import (
 )
 
 FPS = 30
+
+
+@pytest.fixture(autouse=True)
+def _no_licence_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's own key must not turn these into network tests."""
+    monkeypatch.delenv("TAMTREE_REMOTION_LICENSE_KEY", raising=False)
+
+
 NARRATION_ID = "bin_01J8XKNARR"
 
 
@@ -371,6 +379,16 @@ async def test_a_failed_normalisation_fails_the_step_and_nothing_renders() -> No
     with pytest.raises(RuntimeError, match="normalise the narration loudness.*not installed"):
         await _run(_ctx(runtime=runtime))
     assert runtime.calls == []
+
+
+async def test_a_render_with_no_licence_key_still_renders_and_says_it_reported_nothing() -> None:
+    """V0.4's binding consequence: failing the render would be worse than the
+    compliance gap it tries to prevent — but the gap is stated, per render."""
+    result = await _run(_ctx())
+    out = result["main"][0].json_
+    assert out["remotion_usage_report"] == "not_configured"
+    assert "TAMTREE_REMOTION_LICENSE_KEY" in out["remotion_usage_detail"]
+    assert "video" in (result["main"][0].binary or {})
 
 
 # --- what it refuses, and how early ----------------------------------------

@@ -81,6 +81,51 @@ happens before Chrome exists. It deliberately does not assert on a rendered
 video: that needs the image, a browser and a golden frame, and it is V3.4/V3.5's
 to prove.
 
+## The image
+
+`Dockerfile` builds the render image. It is a layer **on top of** a Tamtree
+image and does not replace it:
+
+```
+docker build -f renderer/Dockerfile \
+  --build-arg TAMTREE_IMAGE=tamtree:<tag> -t tamtree-video:<tag> renderer/
+```
+
+The base should be a product image that already has `shortvideo` in its plugin
+set. Plugin install stays a build step of the product image (SEC-G1), and this
+file adds no Python. The image adds:
+
+| What | Where | Pinned by |
+|---|---|---|
+| Node 22 | `/usr/local/bin/node` | the `NODE_IMAGE` digest |
+| the renderer, production `node_modules` only | `/opt/tamtree/remotion` | `package-lock.json` (`npm ci`) |
+| the pre-built bundle | `/opt/tamtree/remotion/bundle` | the same lockfile |
+| Chrome Headless Shell | `/opt/tamtree/chrome` | `@remotion/renderer`'s own pin; `browser.json` records the sha256, `VERSION` the version |
+| ffmpeg (loudness, `tamtree.media`) | Debian package | the base image's Debian release |
+| Inter (the caption face) + DejaVu fallback | fontconfig alias `Tamtree Caption` | Debian package |
+| SBOM + generated notices | `/opt/tamtree/remotion/{sbom.cdx.json,THIRD_PARTY_NOTICES.md}` | build output |
+| `IMAGE-NOTICES.md` | `/opt/tamtree/NOTICES.md` | this repo |
+
+The build fails if the composition does not typecheck, if the unit suite
+fails, if Chrome cannot start (missing shared libraries), if `Tamtree Caption`
+does not resolve to Inter, or if ffmpeg lacks `loudnorm`.
+
+**Read `IMAGE-NOTICES.md` before running this image.** Remotion is not open
+source. Organisations of more than three people need their own Remotion
+licence, and renders are reported against `TAMTREE_REMOTION_LICENSE_KEY`,
+which is set per deployment and never baked in.
+
+### Proving it renders
+
+```
+uv run python renderer/smoke/run.py --image tamtree-video:<tag>
+```
+
+This renders a real three-beat `TimelineV1` inside the image with
+`--network none`. It measures loudness after `shortvideo-audio`, checks
+resolution, codecs and the exact frame count, renders twice and compares the
+decoded frames, and renders the draft. Stills land in `renderer/smoke/out/`.
+
 ## What this renderer does not do
 
 **Integrated loudness normalization.** The document carries `target_lufs` and

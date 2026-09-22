@@ -84,8 +84,11 @@ export const Short: React.FC<{document: RenderDocument}> = ({document}) => {
             // outgoing clip fading away to reveal the incoming one already
             // playing underneath. Getting this backwards renders a fade from
             // the wrong shot — and looks almost right, which is worse.
+            // The default `absolute-fill` layout is load-bearing: it is the
+            // wrapper `zIndex` applies to. `layout="none"` renders no wrapper,
+            // silently drops the style, and stacks by DOM order — later beats
+            // on top, i.e. exactly backwards.
             style={{zIndex: beats.length - index}}
-            layout="none"
           >
             <FadingOut frames={beat.frames} borrowed={borrowed}>
               <BeatClip
@@ -94,24 +97,39 @@ export const Short: React.FC<{document: RenderDocument}> = ({document}) => {
                 playFrames={playFrames}
                 borrowedFrames={borrowed}
               />
-              {beat.captions.length > 0 ? (
-                <Captions
-                  captions={beat.captions.map((caption) => ({
-                    ...caption,
-                    // Caption frames are absolute in the document; inside this
-                    // Sequence the clock restarts at the beat.
-                    start_frame: caption.start_frame - beat.start_frame,
-                    end_frame: caption.end_frame - beat.start_frame,
-                  }))}
-                  safeArea={document.caption_safe_area}
-                  width={width}
-                  height={height}
-                />
-              ) : null}
             </FadingOut>
           </Sequence>
         );
       })}
+
+      {/* Captions are one layer above *all* footage, not inside each beat.
+          Inside the beat, the incoming caption sat under the outgoing clip for
+          the whole dissolve and was tinted by it (V3.4 image smoke, frame 63).
+          Each caption only ever shows inside its own beat, so the captions
+          never overlap each other. */}
+      {beats.map((beat) =>
+        beat.captions.length > 0 ? (
+          <Sequence
+            key={`captions-${beat.index}`}
+            from={beat.start_frame}
+            durationInFrames={beat.frames}
+            style={{zIndex: beats.length + 1}}
+          >
+            <Captions
+              captions={beat.captions.map((caption) => ({
+                ...caption,
+                // Caption frames are absolute in the document; inside this
+                // Sequence the clock restarts at the beat.
+                start_frame: caption.start_frame - beat.start_frame,
+                end_frame: caption.end_frame - beat.start_frame,
+              }))}
+              safeArea={document.caption_safe_area}
+              width={width}
+              height={height}
+            />
+          </Sequence>
+        ) : null,
+      )}
 
       <Audio src={mediaUrl(document, document.narration.file)} />
 

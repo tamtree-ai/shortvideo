@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The curated render executable behind shortvideo.compose — renders one TimelineV1 render document to an mp4.",
+  "description": "The curated render executable behind shortvideo.compose \u2014 renders one TimelineV1 render document to an mp4.",
   "license": "Apache-2.0",
   "bin": {
     "tamtree-remotion-render": "bin/tamtree-remotion-render.mjs"
@@ -11,16 +11,18 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "bundle": "node scripts/bundle.mjs"
+    "bundle": "node scripts/bundle.mjs",
+    "ensure-browser": "node scripts/ensure-browser.mjs",
+    "notices": "node scripts/notices.mjs"
   },
   "dependencies": {
-    "@remotion/bundler": "4.0.526",
     "@remotion/renderer": "4.0.526",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "remotion": "4.0.526"
   },
   "devDependencies": {
+    "@remotion/bundler": "4.0.526",
     "@remotion/cli": "4.0.526",
     "@types/react": "19.0.0",
     "typescript": "5.7.2"

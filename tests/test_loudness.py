@@ -83,7 +83,13 @@ def test_it_honours_the_same_ffmpeg_override_as_the_product(
 
 def test_the_filter_carries_the_three_numbers_and_nothing_else() -> None:
     argv = _argv(true_peak_dbtp=-1.5)
-    assert argv[argv.index("-af") + 1] == "loudnorm=I=-16:TP=-1.5:LRA=11:dual_mono=true"
+    assert argv[argv.index("-af") + 1] == "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+
+def test_mono_is_measured_as_one_channel() -> None:
+    """Not `dual_mono`: Remotion's equal-power upmix already preserves a mono
+    track's loudness, and dual-mono measurement put the render 3 LU low."""
+    assert "dual_mono" not in " ".join(_argv())
 
 
 def test_the_output_is_48k_pcm_so_nothing_resamples_twice() -> None:

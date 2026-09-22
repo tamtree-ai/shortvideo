@@ -136,12 +136,17 @@ class LoudnormPreset:
                 f"loudnorm normalises exactly one audio input, got {len(inputs)}"
             )
 
-        # `dual_mono=true` matters for TTS: narration is mono, the render is
-        # stereo, and a mono track measured as one channel plays ~3 LU louder
-        # than it measured once it is on both. It has no effect on stereo input.
+        # Mono is measured as **one channel** — no `dual_mono` — and that was
+        # measured, not assumed (V3.4 image smoke). TTS narration is mono and
+        # the render is stereo, but Remotion upmixes mono at −3 dB per channel
+        # (equal-power), and BS.1770 sums channel power, so a mono track at
+        # −16 LUFS comes out of the render at −16 LUFS. `dual_mono=true`
+        # assumes the upmix duplicates at unity instead, and landed the
+        # finished video at −19. `renderer/smoke/run.py` asserts on the
+        # rendered mix, so a change in Remotion's upmix fails there.
         audio_filter = (
             f"loudnorm=I={params.target_lufs:g}:TP={params.true_peak_dbtp:g}"
-            f":LRA={params.loudness_range:g}:dual_mono=true"
+            f":LRA={params.loudness_range:g}"
         )
         out_rel = "output.wav"
         argv = [

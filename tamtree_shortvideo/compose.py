@@ -50,6 +50,7 @@ from tamtree_plugin_sdk import (
 )
 
 from tamtree_shortvideo import loudness
+from tamtree_shortvideo.licensing import report_render
 from tamtree_shortvideo.remotion import BACKEND_ID, PRESET_NAME, RENDER_MEMORY_MB
 from tamtree_shortvideo.timeline import (
     MUSIC_TARGET_LUFS,
@@ -167,6 +168,11 @@ class ComposeNode(ProgrammaticNode):
                             "draft": {"type": "boolean"},
                             "beats": {"type": "number"},
                             "duration_ms": {"type": "number"},
+                            "remotion_usage_report": {
+                                "type": "string",
+                                "enum": ["not_configured", "reported", "failed"],
+                            },
+                            "remotion_usage_detail": {"type": "string"},
                         },
                         "required": ["digest", "template", "frames", "duration_seconds"],
                     },
@@ -388,6 +394,10 @@ class ComposeNode(ProgrammaticNode):
         if rendered is None:
             raise RuntimeError("Short video compose: the render produced no output attachment")
 
+        # After success and outside the gate: a slow report must not hold a
+        # render slot, and a failed one must not fail a finished video.
+        usage = await report_render(ctx)
+
         attachment = str(ctx.param("attachment") or "video").strip() or "video"
         return {
             "main": [
@@ -409,6 +419,10 @@ class ComposeNode(ProgrammaticNode):
                             # this render: `RLIMIT_AS` is off for a browser, so
                             # nothing here observed the real figure.
                             "declared_memory_mb": RENDER_MEMORY_MB,
+                            # Whether Remotion was told about this render
+                            # — `not_configured` / `reported` / `failed`.
+                            "remotion_usage_report": usage["status"],
+                            "remotion_usage_detail": usage["detail"],
                         },
                         "binary": {attachment: rendered},
                     }
