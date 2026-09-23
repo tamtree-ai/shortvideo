@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 import pytest
+from tamtree_plugin_sdk import Item
 from tamtree_plugin_sdk.testing import FakeContext, NodeContract, NodeTestKit
 
 from tamtree_shortvideo.credentials import (
@@ -30,6 +31,7 @@ from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.openrouter_tts import NODE_NAME as OPENROUTER_NODE_NAME
 from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tamtree_shortvideo.shot_list import ShotListNode
 from tests.audio_fixtures import pcm_bytes, wav_bytes
 from tests.conftest import key_file_payload
 
@@ -318,3 +320,19 @@ async def test_openrouter_reports_unpriced_when_the_ledger_never_catches_up(monk
 
     assert data["priced"] is False
     assert data["cost_usd"] == ""
+
+
+class TestShotListContract(NodeContract):
+    """No credential and no socket — a pure check on a script — but it still
+    has to honour the node contract the engine runs every step under."""
+
+    def make_node(self) -> ShotListNode:
+        return ShotListNode()
+
+    def make_context(self) -> FakeContext:
+        script = {"beats": [{"narration": "One line.", "visual_prompt": "A calm sea."}]}
+        return (
+            NodeTestKit(ShotListNode())
+            .inputs("main", [Item.model_validate({"json": {"text": json.dumps(script)}})])
+            .context()
+        )

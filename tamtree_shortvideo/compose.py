@@ -57,6 +57,7 @@ from tamtree_shortvideo.timeline import (
     NARRATION_TARGET_LUFS,
     NARRATION_TRUE_PEAK_DBTP,
     TimelineError,
+    as_json,
     render_document,
     timeline_digest,
     timeline_from_json,
@@ -192,6 +193,8 @@ class ComposeNode(ProgrammaticNode):
                                 "enum": ["not_configured", "reported", "failed"],
                             },
                             "remotion_usage_detail": {"type": "string"},
+                            "timeline": {"type": "object"},
+                            "attachment": {"type": "string"},
                         },
                         "required": ["digest", "template", "frames", "duration_seconds"],
                     },
@@ -219,6 +222,18 @@ class ComposeNode(ProgrammaticNode):
                         "composition and the same frame boundaries — scale is the only "
                         "difference, so approving the draft and rendering the final are "
                         "the same decision."
+                    ),
+                },
+                {
+                    "name": "expected_digest",
+                    "label": "Approved timeline digest",
+                    "type": "string",
+                    "default": "",
+                    "description": (
+                        "Refuse to render unless the timeline's digest is exactly this — map it "
+                        "from the draft that was approved, e.g. {{ $node('draft').items[0]"
+                        ".json['digest'] }}, so the final render is provably the approved one. "
+                        "Blank skips the check."
                     ),
                 },
                 {
@@ -265,15 +280,21 @@ class ComposeNode(ProgrammaticNode):
             )
         return raw
 
-    def _resolve_refs(self, ctx: ExecutionContext, wanted: set[str]) -> dict[str, BinaryRef]:
+    def _resolve_refs(
+        self, ctx: ExecutionContext, wanted: set[str]
+    ) -> tuple[dict[str, BinaryRef], dict[str, BinaryRef]]:
         """Every `BinaryRef` the timeline names, found among the attachments on
-        the incoming items. A ref the run never produced is a rejection here —
-        before any bytes are fetched, and long before Chrome exists."""
+        the incoming items — keyed by ref id, and by the attachment name it
+        arrived under (which is what the output carries forward). A ref the run
+        never produced is a rejection here — before any bytes are fetched, and
+        long before Chrome exists."""
         found: dict[str, BinaryRef] = {}
+        named: dict[str, BinaryRef] = {}
         for item in ctx.input_items():
-            for ref in (item.binary or {}).values():
-                if ref.id in wanted:
-                    found.setdefault(ref.id, ref)
+            for attachment, ref in (item.binary or {}).items():
+                if ref.id in wanted and ref.id not in found:
+                    found[ref.id] = ref
+                    named.setdefault(attachment, ref)
         missing = sorted(wanted - set(found))
         if missing:
             raise NodeConfigurationError(
@@ -281,7 +302,7 @@ class ComposeNode(ProgrammaticNode):
                 f"{len(missing)} artifact(s) that no incoming item carries — {', '.join(missing)}. "
                 "Every clip and the narration must reach this step as an attachment."
             )
-        return found
+        return found, named
 
     async def _normalise(
         self, ctx: ExecutionContext, ref: BinaryRef, *, track: str, target_lufs: float
@@ -333,6 +354,12 @@ class ComposeNode(ProgrammaticNode):
             raise NodeConfigurationError(f"Short video compose: {error}") from error
 
         digest = timeline_digest(timeline)
+        expected = str(ctx.param("expected_digest") or "").strip()
+        if expected and expected != digest:
+            raise NodeConfigurationError(
+                "Short video compose: this timeline is not the one that was approved "
+                f"(digest {digest[:12]}…, approved {expected[:12]}…). Nothing was rendered."
+            )
 
         # 2. Resolve every ref, then fix the order the runtime materializes in.
         #    The timeline document goes first so the preset can name it without
@@ -342,7 +369,7 @@ class ComposeNode(ProgrammaticNode):
         if timeline.music is not None:
             ordered_ids.append(timeline.music.ref_id)
         ordered_ids.extend(beat.clip.ref_id for beat in timeline.beats)
-        refs = self._resolve_refs(ctx, set(ordered_ids))
+        refs, sources = self._resolve_refs(ctx, set(ordered_ids))
 
         # 2b. Apply §7's integrated-loudness targets to every audio track.
         #     After validation and ref resolution — so a bad timeline still
@@ -418,6 +445,12 @@ class ComposeNode(ProgrammaticNode):
         usage = await report_render(ctx)
 
         attachment = str(ctx.param("attachment") or "video").strip() or "video"
+        # The sources travel on with the render — the originals, not the
+        # loudness-normalised copies, so a second compose of the same timeline
+        # (the final after an approved draft) resolves the same refs and
+        # computes the same digest. That is what lets an approval gate sit
+        # between two composes with nothing re-assembled in between.
+        carried = {name: ref for name, ref in sources.items() if name != attachment}
         return {
             "main": [
                 Item.model_validate(
@@ -442,8 +475,13 @@ class ComposeNode(ProgrammaticNode):
                             # — `not_configured` / `reported` / `failed`.
                             "remotion_usage_report": usage["status"],
                             "remotion_usage_detail": usage["detail"],
+                            "timeline": as_json(timeline),
+                            # Which attachment is the video — the item also
+                            # carries the timeline's sources, and a reviewer's
+                            # preview must not pick a clip by mistake.
+                            "attachment": attachment,
                         },
-                        "binary": {attachment: rendered},
+                        "binary": {**carried, attachment: rendered},
                     }
                 )
             ]

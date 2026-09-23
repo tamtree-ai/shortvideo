@@ -36,6 +36,8 @@ EXPECTED_NODES = {
     "shortvideo.minimax_collect",
     "shortvideo.minimax_cancel",
     "shortvideo.compose",
+    "shortvideo.shot_list",
+    "shortvideo.assemble",
 }
 
 EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api", OPENROUTER_CREDENTIAL_TYPE}
@@ -99,7 +101,9 @@ def test_nodes_declare_an_output_schema() -> None:
 #: than a relaxed rule, so the next node that forgets its slot still fails.
 #: `shortvideo.compose` renders locally through the curated runtime: it opens
 #: no socket, reaches no vendor, and has nothing to authenticate to.
-NODES_WITHOUT_CREDENTIALS = {"shortvideo.compose"}
+#: `shot_list` and `assemble` are pure data steps — the second reads the
+#: workspace's own asset library, which is tenant-scoped by the engine.
+NODES_WITHOUT_CREDENTIALS = {"shortvideo.compose", "shortvideo.shot_list", "shortvideo.assemble"}
 
 
 def test_every_node_declares_the_credentials_it_uses() -> None:

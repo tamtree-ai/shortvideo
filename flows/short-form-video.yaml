@@ -1,0 +1,261 @@
+# Short-form video — a topic in, an approved vertical short out (V4.2).
+#
+#   topic -> script -> shot list -> narration -> one clip per beat (loop)
+#         -> assemble -> draft render -> approval -> final render -> save
+#
+# WHERE THE MONEY IS, in order: the script (one model call), the narration (one
+# Google synthesis), then one MiniMax generation per beat — the expensive
+# part — then two local renders that cost CPU but no provider. Everything that
+# can refuse a run does so before the first MiniMax submit: the shot list
+# checks the script, and the narration step refuses an unpriced call.
+#
+# WHAT A REVIEWER APPROVES is the draft: the same timeline at half size, with
+# the same cuts, captions and mix. The final render refuses any timeline whose
+# digest differs from the approved draft's (`expected_digest`), so "approve
+# one, render another" is not a thing this flow can do.
+#
+# Publish `generate-one-beat` BEFORE this flow can run: the Loop resolves its
+# body's published version at plan time, and installed flows arrive as drafts.
+apiVersion: tamtree.dev/v1
+kind: Flow
+metadata:
+  name: short-form-video
+  display_name: Short-form video
+spec:
+  api_version: tamtree.dev/v1
+  flow_type: pipeline
+  nodes:
+    - id: topic
+      type: tamtree.manual_trigger
+      position: [40.0, 200.0]
+      params:
+        input_schema:
+          type: object
+          properties:
+            topic:
+              type: string
+              description: What the short is about, in a sentence.
+          required: [topic]
+
+    # The script, as JSON. A Chat step rather than an Agent step: nothing here
+    # needs tools or a persona, and the shot list parses whatever shape the
+    # reply comes back in (fenced, prefixed, bare) and refuses anything else.
+    # The line limit in the prompt and the one on `shot_list` are the same
+    # number — a caption's worth of speech, about six seconds.
+    - id: script
+      type: tamtree.llm_chat
+      position: [260.0, 200.0]
+      params:
+        system_prompt: >-
+          You write scripts for vertical short-form videos. Reply with JSON only,
+          no commentary, in exactly this shape:
+          {"beats": [{"narration": "...", "visual_prompt": "..."}]}.
+          Write 4 to 6 beats. Each narration is one spoken sentence of at most
+          90 characters. Each visual_prompt describes one continuous 6-second
+          shot for a video model: subject, setting, camera movement, lighting.
+          No text, logos or captions in the shots.
+        prompt: "Topic: {{ $json['topic'] }}"
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # The last free step. Numbers the beats (a beat's identity from here on)
+    # and builds the narration's phrase list with a `beat-<N>` mark per beat.
+    - id: shot_list
+      type: shortvideo.shot_list
+      position: [480.0, 200.0]
+      params:
+        max_beats: 8
+        max_narration_characters: 90
+
+    # One synthesis for the whole short, so the voice is continuous and the
+    # timing comes from one clock. Phrase-list mode turns each beat's line into
+    # a marked phrase; the marks come back as each beat's start time.
+    #
+    # The price is left at 0 on purpose, and the step refuses to run with it:
+    # fill in your voice tier's rate from Google's pricing page (§7 — no
+    # vendor price ships in a default).
+    - id: narrate
+      type: shortvideo.google_tts
+      position: [700.0, 200.0]
+      params:
+        input_mode: captions
+        captions: "{{ $json['phrases'] }}"
+        language_code: en-US
+        voice_name: en-US-Neural2-C
+        audio_encoding: LINEAR16
+        output_binary_property: audio
+        require_timepoints: true
+      credentials:
+        google_service_account: google
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # An intermediate kept: the narration is in the library the moment it
+    # exists, so a later failure never has to buy it again.
+    - id: save_narration
+      type: tamtree.save_asset
+      position: [920.0, 60.0]
+      params:
+        name: short-narration
+        kind: audio
+        binary_property: audio
+        metadata:
+          tags: [shortvideo, narration]
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    - id: split_beats
+      type: tamtree.split_out
+      position: [920.0, 200.0]
+      params:
+        field: beats
+        include: no_other_fields
+
+    # The Wave 2 harness's loop, unchanged: one beat per pass, a failed beat
+    # skipped rather than discarding the paid-for siblings, and a cap checked
+    # before the first pass. The shot list already refused anything over 8.
+    - id: per_beat
+      type: tamtree.loop
+      position: [1140.0, 200.0]
+      params:
+        flow_id: generate-one-beat
+        mode: for_each
+        batch_size: 1
+        max_iterations: 25
+        on_max_iterations: fail
+        on_item_error: skip
+
+    # Every pass, whatever happened to it — the record of which beat failed and
+    # why, since `main` has already dropped the failures.
+    - id: beat_log
+      type: tamtree.set
+      position: [1360.0, 340.0]
+      params:
+        fields:
+          logged: "true"
+
+    # Clips on `main`, the narration on its own port. Refuses by beat number
+    # if any beat has no clip, rather than rendering a short whose narration
+    # drifts off its footage.
+    - id: assemble
+      type: shortvideo.assemble
+      position: [1360.0, 200.0]
+      params:
+        template: short-captioned
+        crossfade_frames: 6
+
+    - id: draft
+      type: shortvideo.compose
+      position: [1580.0, 200.0]
+      params:
+        draft: true
+        attachment: video
+      settings:
+        timeout_s: 900
+
+    - id: review
+      type: tamtree.approval
+      position: [1800.0, 200.0]
+      params:
+        title: Approve this short?
+        message: >-
+          {{ $json['beats'] }} beats, {{ $json['duration_seconds'] }}s. This is the
+          half-size draft; approving renders the same timeline (digest
+          {{ $json['digest'] }}) at full size.
+        timeout_s: 604800
+        on_timeout: reject
+
+    - id: final
+      type: shortvideo.compose
+      position: [2020.0, 120.0]
+      params:
+        draft: false
+        attachment: video
+        expected_digest: "{{ $node('draft').items[0].json['digest'] }}"
+      settings:
+        timeout_s: 1800
+
+    - id: save_short
+      type: tamtree.save_asset
+      position: [2240.0, 120.0]
+      params:
+        name: "short-{{ $json['digest'] }}"
+        kind: video
+        binary_property: video
+        metadata:
+          tags: [shortvideo, final]
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # A rejection is a business outcome, not a failure: the run ends here with
+    # the draft's digest recorded, and nothing is regenerated automatically.
+    - id: rejected
+      type: tamtree.set
+      position: [2020.0, 300.0]
+      params:
+        fields:
+          status: rejected
+          digest: "{{ $json['digest'] }}"
+
+  connections:
+    - from_node: topic
+      to_node: script
+    - from_node: script
+      to_node: shot_list
+    - from_node: shot_list
+      to_node: narrate
+    - from_node: narrate
+      to_node: save_narration
+    - from_node: narrate
+      to_node: split_beats
+    - from_node: split_beats
+      to_node: per_beat
+    - from_node: per_beat
+      from_port: status
+      to_node: beat_log
+    - from_node: per_beat
+      to_node: assemble
+    - from_node: narrate
+      to_node: assemble
+      to_port: narration
+    - from_node: assemble
+      to_node: draft
+    - from_node: draft
+      to_node: review
+    - from_node: review
+      from_port: approved
+      to_node: final
+    - from_node: final
+      to_node: save_short
+    - from_node: review
+      from_port: rejected
+      to_node: rejected
+
+  nodes_in_order:
+    - topic
+    - script
+    - shot_list
+    - narrate
+    - save_narration
+    - split_beats
+    - per_beat
+    - beat_log
+    - assemble
+    - draft
+    - review
+    - final
+    - save_short
+    - rejected
+
+  pinned_data:
+    topic:
+      - json:
+          topic: Why octopuses are the smartest invertebrates

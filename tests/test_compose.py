@@ -322,6 +322,45 @@ async def test_the_output_attachment_can_be_renamed() -> None:
     assert "final_cut" in (result["main"][0].binary or {})
 
 
+async def test_the_render_carries_its_timeline_and_original_sources_forward() -> None:
+    """What lets an approval sit between the draft and the final: the draft's
+    output item is itself a valid compose input. The *original* narration
+    travels, not the loudness-normalised copy — the final must resolve the same
+    refs, or it would compute a different digest from the approved one."""
+    timeline = _timeline()
+    result = await _run(_ctx(timeline, draft=True))
+    (draft,) = result["main"]
+    binary = draft.binary or {}
+
+    assert draft.json_["timeline"] == as_json(timeline)
+    assert draft.json_["attachment"] == "video"
+    assert binary[NARRATION_ID].id == NARRATION_ID
+    assert {beat.clip.ref_id for beat in timeline.beats} <= {ref.id for ref in binary.values()}
+
+    (final,) = (
+        await _run(
+            FakeExecutionContext(
+                inputs={"main": [draft]}, params={}, tool_runtime=_RecordingRuntime()
+            )
+        )
+    )["main"]
+    assert final.json_["digest"] == draft.json_["digest"]
+
+
+async def test_the_final_refuses_a_timeline_that_is_not_the_approved_one() -> None:
+    runtime = _RecordingRuntime()
+    with pytest.raises(NodeConfigurationError, match="not the one that was approved"):
+        await _run(_ctx(runtime=runtime, expected_digest="0" * 64))
+    assert runtime.calls == []
+    assert runtime.loudness_calls == []
+
+
+async def test_the_final_renders_when_the_digest_matches() -> None:
+    result = await _run(_ctx(expected_digest=timeline_digest(_timeline())))
+
+    assert "video" in (result["main"][0].binary or {})
+
+
 # --- loudness: §7's numbers, applied before the render ----------------------
 
 

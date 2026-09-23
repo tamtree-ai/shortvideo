@@ -27,6 +27,8 @@ from tamtree_shortvideo import NODES
 FLOWS = Path(__file__).resolve().parent.parent / "flows"
 BODY = "generate-one-beat"
 PARENT = "beats-to-clips"
+TEMPLATE = "short-form-video"
+ALL = [BODY, PARENT, TEMPLATE]
 
 MANIFESTS = {node.manifest.name: node.manifest for node in NODES}
 
@@ -41,7 +43,7 @@ def _definition(name: str) -> FlowDefinition:
     return FlowDefinition.model_validate(_document(name)["spec"])
 
 
-@pytest.mark.parametrize("name", [BODY, PARENT])
+@pytest.mark.parametrize("name", ALL)
 def test_the_flow_parses_as_the_engine_would_read_it(name: str) -> None:
     """`extra="forbid"` all the way down, so a typo in a key is an error here
     rather than a param silently ignored on a real instance."""
@@ -54,7 +56,7 @@ def test_the_flow_parses_as_the_engine_would_read_it(name: str) -> None:
     assert definition.flow_type == "pipeline"
 
 
-@pytest.mark.parametrize("name", [BODY, PARENT])
+@pytest.mark.parametrize("name", ALL)
 def test_every_node_is_reachable_and_ordered(name: str) -> None:
     definition = _definition(name)
     ids = [node.id for node in definition.nodes]
@@ -72,7 +74,7 @@ def test_every_node_is_reachable_and_ordered(name: str) -> None:
         )
 
 
-@pytest.mark.parametrize("name", [BODY, PARENT])
+@pytest.mark.parametrize("name", ALL)
 def test_this_plugins_steps_name_params_the_nodes_actually_have(name: str) -> None:
     """The drift this file exists to catch."""
     definition = _definition(name)
@@ -86,7 +88,7 @@ def test_this_plugins_steps_name_params_the_nodes_actually_have(name: str) -> No
         assert not unknown, f"{name}/{node.id}: {node.type} has no param(s) {sorted(unknown)}"
 
 
-@pytest.mark.parametrize("name", [BODY, PARENT])
+@pytest.mark.parametrize("name", ALL)
 def test_this_plugins_steps_bind_the_credential_the_node_requires(name: str) -> None:
     definition = _definition(name)
 
@@ -179,3 +181,99 @@ def test_the_step_timeout_outlives_the_nodes_own_wait() -> None:
     collect = next(node for node in definition.nodes if node.id == "collect")
 
     assert collect.settings.timeout_s > collect.params["max_wait_seconds"]
+
+
+# --- the Short-form video template (V4.2) -------------------------------------
+
+
+def _by_id(name: str) -> dict[str, Any]:
+    return {node.id: node for node in _definition(name).nodes}
+
+
+def _into(name: str, node_id: str) -> set[tuple[str, str, str]]:
+    return {
+        (c.from_node, c.from_port, c.to_port)
+        for c in _definition(name).connections
+        if c.to_node == node_id
+    }
+
+
+def test_the_template_checks_the_script_before_anything_is_paid_for() -> None:
+    """The shot list sits between the model and the first paid call, and its
+    beat ceiling is under the loop's — so an oversized plan is refused before
+    the narration is bought, not after."""
+    definition = _definition(TEMPLATE)
+    order = definition.nodes_in_order
+    nodes = _by_id(TEMPLATE)
+
+    assert order.index("shot_list") < order.index("narrate") < order.index("per_beat")
+    assert nodes["shot_list"].params["max_beats"] <= nodes["per_beat"].params["max_iterations"]
+
+
+def test_the_template_narrates_the_shot_list_s_marked_phrases() -> None:
+    narrate = _by_id(TEMPLATE)["narrate"]
+
+    assert narrate.params["input_mode"] == "captions"
+    assert "phrases" in narrate.params["captions"]
+    # A voice that drops marks would leave assemble with no beat boundaries.
+    assert narrate.params["require_timepoints"] is True
+
+
+def test_the_template_runs_the_same_loop_body_under_the_same_policy() -> None:
+    loop = _by_id(TEMPLATE)["per_beat"]
+
+    assert loop.params["flow_id"] == BODY
+    assert loop.params["batch_size"] == 1
+    assert loop.params["on_item_error"] == "skip"
+    assert loop.params["on_max_iterations"] == "fail"
+
+
+def test_assemble_gets_clips_on_main_and_the_narration_on_its_own_port() -> None:
+    assert _into(TEMPLATE, "assemble") == {
+        ("per_beat", "main", "main"),
+        ("narrate", "main", "narration"),
+    }
+
+
+def test_the_final_render_follows_approval_and_is_pinned_to_the_draft() -> None:
+    """The approve-one-render-another guard, asserted where an author would
+    break it: the final compose is reachable only from `approved`, and it
+    refuses a timeline whose digest is not the draft's."""
+    nodes = _by_id(TEMPLATE)
+
+    assert nodes["draft"].params["draft"] is True
+    assert nodes["final"].params["draft"] is False
+    assert _into(TEMPLATE, "final") == {("review", "approved", "main")}
+    assert "$node('draft')" in nodes["final"].params["expected_digest"]
+
+
+def test_a_rejection_ends_the_run_and_regenerates_nothing() -> None:
+    """No automatic paid regeneration on rejection (V4.4): nothing downstream
+    of `rejected` is a provider node."""
+    definition = _definition(TEMPLATE)
+    downstream = {
+        c.to_node
+        for c in definition.connections
+        if c.from_node == "review" and c.from_port == "rejected"
+    }
+    types = {node.id: node.type for node in definition.nodes}
+
+    assert downstream == {"rejected"}
+    assert not any(c.from_node == "rejected" for c in definition.connections), (
+        "a rejection must be terminal"
+    )
+    assert types["rejected"] == "tamtree.set"
+
+
+def test_the_approval_waits_and_silence_rejects() -> None:
+    review = _by_id(TEMPLATE)["review"]
+
+    assert review.type == "tamtree.approval"
+    assert review.params["on_timeout"] == "reject"
+
+
+def test_the_template_ships_editor_test_data_for_its_trigger() -> None:
+    definition = _definition(TEMPLATE)
+
+    (item,) = definition.pinned_data["topic"]
+    assert item.json_["topic"]

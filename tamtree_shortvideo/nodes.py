@@ -16,12 +16,14 @@ from typing import Final
 
 from tamtree_plugin_sdk import Node
 
+from tamtree_shortvideo.assemble import AssembleNode
 from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.google_tts import GoogleTtsNode
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tamtree_shortvideo.shot_list import ShotListNode
 
 __all__ = ["CATEGORY", "ICON", "NODES"]
 
@@ -31,10 +33,12 @@ ICON: Final = "icons/shortvideo.svg"
 CATEGORY: Final = "Files & media"
 
 NODES: Final[list[Node]] = [
+    ShotListNode(),
     GoogleTtsNode(),
     OpenRouterTtsNode(),
     MinimaxSubmitNode(),
     MinimaxCollectNode(),
     MinimaxCancelNode(),
+    AssembleNode(),
     ComposeNode(),
 ]
