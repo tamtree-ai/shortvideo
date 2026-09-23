@@ -232,6 +232,7 @@ def test_assemble_gets_clips_on_main_and_the_narration_on_its_own_port() -> None
     assert _into(TEMPLATE, "assemble") == {
         ("per_beat", "main", "main"),
         ("narrate", "main", "narration"),
+        ("reuse_narration", "found", "narration"),
     }
 
 
@@ -259,6 +260,10 @@ def test_a_rejection_ends_the_run_and_regenerates_nothing() -> None:
     types = {node.id: node.type for node in definition.nodes}
 
     assert downstream == {"rejected"}
+    # What a replay needs survives the rejection.
+    fields = _by_id(TEMPLATE)["rejected"].params["fields"]
+    assert "_approval" in fields["review_note"]
+    assert "shot_list" in fields["script"]
     assert not any(c.from_node == "rejected" for c in definition.connections), (
         "a rejection must be terminal"
     )
@@ -272,8 +277,94 @@ def test_the_approval_waits_and_silence_rejects() -> None:
     assert review.params["on_timeout"] == "reject"
 
 
+def test_the_reviewer_watches_the_draft_and_the_audit_names_its_timeline() -> None:
+    """V4.3: the gate previews the rendered draft — not the clips and
+    narration riding the same item — and records the digest the final render
+    is pinned to."""
+    review = _by_id(TEMPLATE)["review"]
+
+    assert review.params["preview"] == _by_id(TEMPLATE)["draft"].params["attachment"]
+    assert "digest" in review.params["subject"]
+
+
 def test_the_template_ships_editor_test_data_for_its_trigger() -> None:
     definition = _definition(TEMPLATE)
 
     (item,) = definition.pinned_data["topic"]
     assert item.json_["topic"]
+
+
+# --- V4.4: recovery is a re-run that buys nothing twice ------------------------
+
+#: The submit params that change a generated clip. Every one must be in the
+#: reuse key with the same value, or a replay would hand back a clip made
+#: differently from the one the flow asks for.
+CLIP_INPUTS = ("model", "duration_seconds", "resolution", "ratio", "prompt_expansion_mode")
+#: The narration params that change the audio.
+VOICE_INPUTS = ("language_code", "voice_name", "audio_encoding")
+
+
+def test_the_clip_reuse_key_is_exactly_what_submit_sends() -> None:
+    nodes = _by_id(BODY)
+    key = nodes["reuse_clip"].params["key"]
+    submit = nodes["submit"].params
+
+    for name in CLIP_INPUTS:
+        assert key[name] == submit[name], f"reuse key {name!r} drifted from submit"
+    assert key["prompt"] == submit["prompt"]
+    # And the key names nothing submit does not send.
+    assert set(key) == {*CLIP_INPUTS, "prompt"}
+
+
+def test_a_found_clip_never_reaches_the_paid_step() -> None:
+    """The whole V4.4 promise, stated structurally: submit is reachable only
+    from `missing`, and the found branch ends in its own Return."""
+    assert _into(BODY, "submit") == {("reuse_clip", "missing", "main")}
+    assert _into(BODY, "label_reused") == {("reuse_clip", "found", "main")}
+    nodes = _by_id(BODY)
+    assert nodes["reused"].type == "tamtree.return"
+    assert nodes["generated"].type == "tamtree.return"
+    # `failed` is the one status a Loop treats as a failed pass.
+    assert nodes["reused"].params["status"] != "failed"
+
+
+def test_a_generated_clip_is_saved_under_the_name_the_next_run_looks_up() -> None:
+    save = _by_id(BODY)["save_clip"]
+
+    assert "asset_name" in save.params["name"]
+    assert set(save.params["metadata"]["fields"]) >= {"duration_seconds", "task_id"}
+
+
+def test_a_reused_clip_is_labelled_like_a_generated_one() -> None:
+    """The parent cannot tell the two apart except by `reused` — assemble
+    reads the same fields either way."""
+    nodes = _by_id(BODY)
+    generated = set(nodes["label_clip"].params["fields"])
+    reused = set(nodes["label_reused"].params["fields"])
+
+    assert generated == reused
+    assert {"beat_number", "asset_id", "duration_seconds"} <= reused
+
+
+def test_the_narration_reuse_key_is_exactly_what_narrate_uses() -> None:
+    nodes = _by_id(TEMPLATE)
+    key = nodes["reuse_narration"].params["key"]
+    narrate = nodes["narrate"].params
+
+    for name in VOICE_INPUTS:
+        assert key[name] == narrate[name], f"reuse key {name!r} drifted from narrate"
+    assert key["phrases"] == narrate["captions"]
+    assert _into(TEMPLATE, "narrate") == {("reuse_narration", "missing", "main")}
+
+
+def test_saved_narration_keeps_what_assemble_needs_to_skip_synthesis() -> None:
+    save = _by_id(TEMPLATE)["save_narration"]
+
+    assert "asset_name" in save.params["name"]
+    assert set(save.params["metadata"]["fields"]) >= {"duration_seconds", "captions", "audio"}
+
+
+def test_a_replay_s_script_skips_the_model() -> None:
+    assert _into(TEMPLATE, "script") == {("has_script", "false", "main")}
+    assert ("has_script", "true", "main") in _into(TEMPLATE, "shot_list")
+    assert "script" in _by_id(TEMPLATE)["shot_list"].params["script"]

@@ -23,6 +23,7 @@ from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tamtree_shortvideo.reuse import ReuseNode
 from tamtree_shortvideo.shot_list import ShotListNode
 
 __all__ = ["CATEGORY", "ICON", "NODES"]
@@ -34,6 +35,7 @@ CATEGORY: Final = "Files & media"
 
 NODES: Final[list[Node]] = [
     ShotListNode(),
+    ReuseNode(),
     GoogleTtsNode(),
     OpenRouterTtsNode(),
     MinimaxSubmitNode(),

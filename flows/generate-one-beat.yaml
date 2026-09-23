@@ -52,6 +52,27 @@ spec:
               type: string
           required: [beat_number, visual_prompt]
 
+    # V4.4: look before buying. A clip is saved under a name derived from
+    # exactly what generated it, so a replay of the same shot list — after a
+    # failed beat, a rejected draft or a change of look — finds the clips it
+    # already paid for and submits only the beats it does not have.
+    #
+    # The key must list every submit param that changes the clip, with the
+    # same values `submit` uses below; `test_flows.py` holds the two together.
+    - id: reuse_clip
+      type: shortvideo.reuse
+      position: [160.0, 160.0]
+      params:
+        prefix: clip
+        attachment: video
+        key:
+          model: MiniMax-H3
+          prompt: "{{ $json['visual_prompt'] }}"
+          duration_seconds: 6
+          resolution: 768P
+          ratio: "9:16"
+          prompt_expansion_mode: balanced
+
     # The one call in this flow that spends money, and the only step here with
     # retries deliberately OFF.
     #
@@ -115,11 +136,16 @@ spec:
       type: tamtree.save_asset
       position: [760.0, 160.0]
       params:
-        name: "beat-{{ $json['beat_number'] }}-{{ $json['task_id'] }}"
+        # The reuse name, so the next run with this prompt finds it. The
+        # fields are what `label_reused` hands back in place of a new collect.
+        name: "{{ $json['asset_name'] }}"
         kind: video
         binary_property: video
         metadata:
           tags: [shortvideo, beat]
+          fields:
+            duration_seconds: "{{ $json['duration_seconds'] }}"
+            task_id: "{{ $json['task_id'] }}"
       settings:
         timeout_s: 120
         retry_on_fail: true
@@ -152,20 +178,66 @@ spec:
           # Named here rather than left as Save Asset's `id`, so the parent
           # depends on this flow's contract and not on that node's field names.
           asset_id: "{{ $json['id'] }}"
+          reused: false
+
+    # The generated branch says so, and ends the pass.
+    - id: generated
+      type: tamtree.return
+      position: [1240.0, 160.0]
+      params:
+        status: succeeded
+
+    # A found clip, labelled exactly as a generated one would be — the parent
+    # cannot tell the two apart except by `reused`, which is the point. Nothing
+    # was billed this run, so `billed_seconds` is 0.
+    - id: label_reused
+      type: tamtree.set
+      position: [520.0, 320.0]
+      params:
+        fields:
+          beat_number: "{{ $json['beat_number'] }}"
+          narration_text: "{{ $json['narration_text'] }}"
+          visual_prompt: "{{ $json['visual_prompt'] }}"
+          task_id: "{{ $json['task_id'] }}"
+          duration_seconds: "{{ $json['duration_seconds'] }}"
+          billed_seconds: 0
+          asset_id: "{{ $json['asset_id'] }}"
+          reused: true
+
+    - id: reused
+      type: tamtree.return
+      position: [760.0, 320.0]
+      params:
+        status: reused
+        message: "beat {{ $json['beat_number'] }}: reused a saved clip, nothing submitted"
 
   connections:
     - from_node: start
+      to_node: reuse_clip
+    - from_node: reuse_clip
+      from_port: missing
       to_node: submit
+    - from_node: reuse_clip
+      from_port: found
+      to_node: label_reused
+    - from_node: label_reused
+      to_node: reused
     - from_node: submit
       to_node: collect
     - from_node: collect
       to_node: save_clip
     - from_node: save_clip
       to_node: label_clip
+    - from_node: label_clip
+      to_node: generated
 
   nodes_in_order:
     - start
+    - reuse_clip
     - submit
     - collect
     - save_clip
     - label_clip
+    - generated
+    - label_reused
+    - reused

@@ -1,4 +1,4 @@
-# Short-form video — a topic in, an approved vertical short out (V4.2).
+# Short-form video — a topic in, an approved vertical short out (V4.2, V4.4).
 #
 #   topic -> script -> shot list -> narration -> one clip per beat (loop)
 #         -> assemble -> draft render -> approval -> final render -> save
@@ -13,6 +13,17 @@
 # the same cuts, captions and mix. The final render refuses any timeline whose
 # digest differs from the approved draft's (`expected_digest`), so "approve
 # one, render another" is not a thing this flow can do.
+#
+# RECOVERY IS A RE-RUN, and a re-run buys nothing twice (V4.4). Every paid
+# artifact is saved under a name derived from exactly what produced it, and
+# looked up before it is paid for (`shortvideo.reuse`). Start the flow with the
+# `script` a previous run recorded — on its `rejected` step, or on `shot_list`'s
+# output — and:
+#   - a beat that failed is the only beat submitted;
+#   - a beat whose visual prompt you edited is the only beat regenerated;
+#   - a change of look alone (the `assemble` params) reuses every clip and the
+#     narration, and only the local render runs.
+# No step here regenerates anything on its own after a rejection.
 #
 # Publish `generate-one-beat` BEFORE this flow can run: the Loop resolves its
 # body's published version at plan time, and installed flows arrive as drafts.
@@ -35,7 +46,19 @@ spec:
             topic:
               type: string
               description: What the short is about, in a sentence.
+            script:
+              description: >-
+                Optional. A shot list from an earlier run, to replay it without
+                writing a new script — beats that were already generated are
+                reused, not bought again.
           required: [topic]
+
+    # A replay brings its own script; a new short asks the model for one.
+    - id: has_script
+      type: tamtree.if
+      position: [180.0, 200.0]
+      params:
+        condition: "{{ $json.get('script') }}"
 
     # The script, as JSON. A Chat step rather than an Agent step: nothing here
     # needs tools or a persona, and the shot list parses whatever shape the
@@ -44,7 +67,7 @@ spec:
     # number — a caption's worth of speech, about six seconds.
     - id: script
       type: tamtree.llm_chat
-      position: [260.0, 200.0]
+      position: [320.0, 280.0]
       params:
         system_prompt: >-
           You write scripts for vertical short-form videos. Reply with JSON only,
@@ -62,12 +85,30 @@ spec:
 
     # The last free step. Numbers the beats (a beat's identity from here on)
     # and builds the narration's phrase list with a `beat-<N>` mark per beat.
+    # A replay's script arrives on `$json['script']`; a new one as the Chat
+    # step's `text`, which is what the node reads when the param is empty.
     - id: shot_list
       type: shortvideo.shot_list
       position: [480.0, 200.0]
       params:
+        script: "{{ $json.get('script') }}"
         max_beats: 8
         max_narration_characters: 90
+
+    # Look before buying the narration. The key is everything that changes
+    # the audio — the phrases (with their marks) and the voice settings on
+    # `narrate`; `test_flows.py` holds the two together.
+    - id: reuse_narration
+      type: shortvideo.reuse
+      position: [620.0, 200.0]
+      params:
+        prefix: narration
+        attachment: audio
+        key:
+          phrases: "{{ $json['phrases'] }}"
+          language_code: en-US
+          voice_name: en-US-Neural2-C
+          audio_encoding: LINEAR16
 
     # One synthesis for the whole short, so the voice is continuous and the
     # timing comes from one clock. Phrase-list mode turns each beat's line into
@@ -78,7 +119,7 @@ spec:
     # vendor price ships in a default).
     - id: narrate
       type: shortvideo.google_tts
-      position: [700.0, 200.0]
+      position: [760.0, 280.0]
       params:
         input_mode: captions
         captions: "{{ $json['phrases'] }}"
@@ -94,17 +135,22 @@ spec:
         retry_on_fail: true
         max_retries: 2
 
-    # An intermediate kept: the narration is in the library the moment it
-    # exists, so a later failure never has to buy it again.
+    # An intermediate kept, under its reuse name, with the timing a replay
+    # needs to assemble without synthesising again.
     - id: save_narration
       type: tamtree.save_asset
-      position: [920.0, 60.0]
+      position: [920.0, 380.0]
       params:
-        name: short-narration
+        name: "{{ $json['asset_name'] }}"
         kind: audio
         binary_property: audio
         metadata:
           tags: [shortvideo, narration]
+          fields:
+            duration_seconds: "{{ $json['duration_seconds'] }}"
+            marks: "{{ $json['marks'] }}"
+            captions: "{{ $json['captions'] }}"
+            audio: "{{ $json['audio'] }}"
       settings:
         timeout_s: 120
         retry_on_fail: true
@@ -131,8 +177,9 @@ spec:
         on_max_iterations: fail
         on_item_error: skip
 
-    # Every pass, whatever happened to it — the record of which beat failed and
-    # why, since `main` has already dropped the failures.
+    # Every pass, whatever happened to it — generated, reused or failed, and
+    # why. `main` has already dropped the failures, so this is the record of
+    # which beat to look at before replaying.
     - id: beat_log
       type: tamtree.set
       position: [1360.0, 340.0]
@@ -140,9 +187,10 @@ spec:
         fields:
           logged: "true"
 
-    # Clips on `main`, the narration on its own port. Refuses by beat number
-    # if any beat has no clip, rather than rendering a short whose narration
-    # drifts off its footage.
+    # Clips on `main`, the narration on its own port (freshly synthesised or
+    # reused — only one of the two ever runs). Refuses by beat number if any
+    # beat has no clip, rather than rendering a short whose narration drifts
+    # off its footage.
     - id: assemble
       type: shortvideo.assemble
       position: [1360.0, 200.0]
@@ -159,6 +207,9 @@ spec:
       settings:
         timeout_s: 900
 
+    # What the reviewer is approving, recorded on the decision's audit row,
+    # and the one attachment to play — the item also carries the clips and
+    # narration the final render needs.
     - id: review
       type: tamtree.approval
       position: [1800.0, 200.0]
@@ -166,8 +217,9 @@ spec:
         title: Approve this short?
         message: >-
           {{ $json['beats'] }} beats, {{ $json['duration_seconds'] }}s. This is the
-          half-size draft; approving renders the same timeline (digest
-          {{ $json['digest'] }}) at full size.
+          half-size draft; approving renders the same timeline at full size.
+        subject: "timeline {{ $json['digest'] }}"
+        preview: video
         timeout_s: 604800
         on_timeout: reject
 
@@ -195,8 +247,10 @@ spec:
         retry_on_fail: true
         max_retries: 2
 
-    # A rejection is a business outcome, not a failure: the run ends here with
-    # the draft's digest recorded, and nothing is regenerated automatically.
+    # A rejection is a business outcome, not a failure. The run ends here with
+    # everything a replay needs: the reviewer's note, who decided, the digest
+    # that was turned down, and the shot list to start the next run from —
+    # edit one beat's visual prompt and only that beat is generated again.
     - id: rejected
       type: tamtree.set
       position: [2020.0, 300.0]
@@ -204,17 +258,32 @@ spec:
         fields:
           status: rejected
           digest: "{{ $json['digest'] }}"
+          review_note: "{{ $json['_approval']['message'] }}"
+          decided_by: "{{ $json['_approval']['decided_by'] }}"
+          script: "{{ $node('shot_list').items[0].json['beats'] }}"
 
   connections:
     - from_node: topic
+      to_node: has_script
+    - from_node: has_script
+      from_port: "true"
+      to_node: shot_list
+    - from_node: has_script
+      from_port: "false"
       to_node: script
     - from_node: script
       to_node: shot_list
     - from_node: shot_list
+      to_node: reuse_narration
+    - from_node: reuse_narration
+      from_port: missing
       to_node: narrate
     - from_node: narrate
       to_node: save_narration
     - from_node: narrate
+      to_node: split_beats
+    - from_node: reuse_narration
+      from_port: found
       to_node: split_beats
     - from_node: split_beats
       to_node: per_beat
@@ -224,6 +293,10 @@ spec:
     - from_node: per_beat
       to_node: assemble
     - from_node: narrate
+      to_node: assemble
+      to_port: narration
+    - from_node: reuse_narration
+      from_port: found
       to_node: assemble
       to_port: narration
     - from_node: assemble
@@ -241,8 +314,10 @@ spec:
 
   nodes_in_order:
     - topic
+    - has_script
     - script
     - shot_list
+    - reuse_narration
     - narrate
     - save_narration
     - split_beats
