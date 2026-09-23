@@ -23,6 +23,8 @@ from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
 from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
+from tamtree_shortvideo.openrouter_video_collect import OpenRouterVideoCollectNode
+from tamtree_shortvideo.openrouter_video_submit import OpenRouterVideoSubmitNode
 from tamtree_shortvideo.reuse import ReuseNode
 from tamtree_shortvideo.shot_list import ShotListNode
 
@@ -41,6 +43,8 @@ NODES: Final[list[Node]] = [
     MinimaxSubmitNode(),
     MinimaxCollectNode(),
     MinimaxCancelNode(),
+    OpenRouterVideoSubmitNode(),
+    OpenRouterVideoCollectNode(),
     AssembleNode(),
     ComposeNode(),
 ]

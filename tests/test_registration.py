@@ -35,6 +35,8 @@ EXPECTED_NODES = {
     "shortvideo.minimax_submit",
     "shortvideo.minimax_collect",
     "shortvideo.minimax_cancel",
+    "shortvideo.openrouter_video_submit",
+    "shortvideo.openrouter_video_collect",
     "shortvideo.compose",
     "shortvideo.shot_list",
     "shortvideo.assemble",
