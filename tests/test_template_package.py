@@ -108,7 +108,7 @@ def test_the_catalog_says_self_hosted_only_and_what_a_run_can_spend() -> None:
 
     assert "self-hosted-only" in meta.catalog.tags
     assert "SELF-HOSTED ONLY" in meta.description
-    assert "at most 8 MiniMax" in meta.description
+    assert "at most 8 MiniMax H3 Max video generations" in " ".join(meta.description.split())
     shot_list = next(n for n in _flows()["short-form-video"].nodes if n.id == "shot_list")
     # The ceiling the description promises is the one the shot list enforces.
     assert shot_list.params["max_beats"] == 8

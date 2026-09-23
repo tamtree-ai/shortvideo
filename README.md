@@ -260,6 +260,45 @@ It does **not** fail the step by default — a cleanup step that throws because 
 clip was already running turns one problem into two. Turn on *Fail if the task
 could not be cancelled* when you want the louder version.
 
+### Short video — OpenRouter video submit / collect (`shortvideo.openrouter_video_submit`, `shortvideo.openrouter_video_collect`)
+
+MiniMax's H3 models, paid from **OpenRouter credits** rather than a MiniMax
+account. With `shortvideo.openrouter_tts` for the narration, one **OpenRouter
+API** credential pays for a whole short, and it is what the `Short-form video`
+template uses. The two nodes split the same way as the MiniMax pair, for the
+same reason: submit returns a job id and does not wait, and collect polls it,
+downloads the clip and saves it.
+
+| Model | Durations | Resolutions | Price on 2026-09-23 |
+|---|---|---|---|
+| `minimax/hailuo-3-max` *(default)* | 5–15s | 480p, 768p | $0.05/s at 480p, $0.08/s at 768p |
+| `minimax/hailuo-3` | 5–15s | 2K only | $0.13/s |
+
+The model, duration, resolution and aspect ratio are checked locally before
+anything is sent. `generate_audio` is always off, because the short's
+soundtrack is the narration and the mix, not the model's.
+
+**Cost is what OpenRouter charged.** Collect reports the job's own
+`usage.cost` to the workspace budget. When that is missing, it asks
+OpenRouter's generation ledger once more; if that also has no answer, the clip
+is reported unpriced rather than guessed. There is no rate to enter.
+
+**Submit will not retry a create on its own.** OpenRouter documents no
+idempotency key either, so a 5xx, a timeout or a dropped connection fails with
+a named error: check openrouter.ai → Activity before running the step again.
+Too few credits (402) and a key spend limit (403) are named, and nothing was
+charged for them.
+
+**What this route does not do:**
+
+- **Cancel a job.** OpenRouter documents no cancel endpoint, so a cancelled
+  run stops waiting and the job finishes (and bills) on its own.
+- **Take images.** OpenRouter wants image URLs a provider can fetch, not
+  attachments; use `shortvideo.minimax_submit` for image-led beats.
+
+The download goes to OpenRouter's authenticated content endpoint on
+`openrouter.ai`, so the API key never leaves the host it was issued for.
+
 ### Short video — compose (`shortvideo.compose`)
 
 Renders one **TimelineV1** document — narration, per-beat footage, captions and
@@ -420,8 +459,9 @@ than guessed at.
 | **1** | `shortvideo.google_tts` — narration audio + caption timepoints | **done** |
 | **1b** | `shortvideo.openrouter_tts` — narration via Gemini 3.1 Flash TTS, no GCP account needed | **done** |
 | **2** | `shortvideo.minimax_submit` / `shortvideo.minimax_collect` — footage | **done** — submit, collect, cancel, image inputs, and the published Loop body |
-| **3** | `shortvideo.compose` — Remotion composition behind a curated backend | **node, backend and renderer done** — the image that carries them (V3.4) and the negative security suite (V3.5) are next |
-| **4** | Published template, attachment-aware approval, recovery | not started |
+| **3** | `shortvideo.compose` — Remotion composition behind a curated backend | **done** |
+| **4** | Published template, attachment-aware approval, recovery | **done** |
+| **5** | `shortvideo.openrouter_video_submit` / `_collect` — footage paid from OpenRouter credits; the template runs on one OpenRouter key | **done** — no live call yet |
 
 `shortvideo.selftest` was Wave 0 scaffolding and Wave 1 removed it. That was
 safe only because nothing had been published yet — once a version is released,

@@ -19,25 +19,23 @@ You need:
 | | |
 |---|---|
 | The `shortvideo` plugin | Installed on the worker, with the render image's Chrome and ffmpeg. See the plugin README. |
-| A Google Cloud service account | With Text-to-Speech enabled. Bound to the `google` slot. |
-| A MiniMax API key | With your per-second rate filled in on the credential. Bound to the `minimax` slot. |
+| An OpenRouter API key with credits | Pays for both the narration and the clips. Bound to the `openrouter` slot. No MiniMax or Google Cloud account is needed. |
 | A default chat model | For the script. Any workspace default works. |
 
-Two things to do after installing:
+One thing to do after installing: **publish `Generate one beat` first.** The
+main flow's Loop runs the published version of it, and installed flows arrive as
+drafts.
 
-1. **Publish `Generate one beat` first.** The main flow's Loop runs the published
-   version of it, and installed flows arrive as drafts.
-2. **Set the narration price.** Open `Narrate` in `Short-form video` and fill in
-   *Price per 1M characters* from Google's pricing page for your voice tier. The
-   step refuses to run at 0: an unpriced call would never reach your budget.
+There is no price to fill in. OpenRouter reports what each narration call and
+each clip actually cost, and that is what reaches your workspace budget.
 
 ## What one run can cost
 
 | Step | Calls | Notes |
 |---|---|---|
 | Script | 1 chat call | Your workspace's default model. Skipped on a replay. |
-| Narration | 1 Google synthesis | Skipped when the same lines and voice were narrated before. |
-| Clips | at most 8 MiniMax generations | 6 s, 768P each. The shot list refuses a longer script before anything is paid for. |
+| Narration | 1 OpenRouter TTS call per beat | Gemini 3.1 Flash TTS. Skipped when the same lines and voice were narrated before. |
+| Clips | at most 8 MiniMax H3 Max generations, via OpenRouter | 6 s, 768p each: $0.08 per second on 2026-09-23, so at most $3.84. The shot list refuses a longer script before anything is paid for. |
 | Draft + final | 2 local renders | CPU only, no provider. |
 
 **How long:** each generation is allowed up to 10 minutes, so the worst case

@@ -213,10 +213,10 @@ def test_the_template_checks_the_script_before_anything_is_paid_for() -> None:
 def test_the_template_narrates_the_shot_list_s_marked_phrases() -> None:
     narrate = _by_id(TEMPLATE)["narrate"]
 
+    # Phrase-list mode is what produces a `beat-<N>` mark per phrase; plain
+    # text would leave assemble with no beat boundaries.
     assert narrate.params["input_mode"] == "captions"
     assert "phrases" in narrate.params["captions"]
-    # A voice that drops marks would leave assemble with no beat boundaries.
-    assert narrate.params["require_timepoints"] is True
 
 
 def test_the_template_runs_the_same_loop_body_under_the_same_policy() -> None:
@@ -299,9 +299,9 @@ def test_the_template_ships_editor_test_data_for_its_trigger() -> None:
 #: The submit params that change a generated clip. Every one must be in the
 #: reuse key with the same value, or a replay would hand back a clip made
 #: differently from the one the flow asks for.
-CLIP_INPUTS = ("model", "duration_seconds", "resolution", "ratio", "prompt_expansion_mode")
+CLIP_INPUTS = ("model", "duration_seconds", "resolution", "ratio")
 #: The narration params that change the audio.
-VOICE_INPUTS = ("language_code", "voice_name", "audio_encoding")
+VOICE_INPUTS = ("voice", "phrase_gap_seconds")
 
 
 def test_the_clip_reuse_key_is_exactly_what_submit_sends() -> None:

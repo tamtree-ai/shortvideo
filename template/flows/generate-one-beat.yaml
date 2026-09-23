@@ -30,7 +30,7 @@ spec:
   nodes:
     # The body's entry contract. Worth setting rather than leaving open: a
     # beat missing `visual_prompt` then fails at the boundary naming the
-    # field, instead of as a MiniMax 4xx two nodes in — which costs a run to
+    # field, instead of as a provider 4xx two nodes in — which costs a run to
     # discover and reads like a vendor problem.
     #
     # `beat_number` is required for a reason that only shows up once something
@@ -66,17 +66,18 @@ spec:
         prefix: clip
         attachment: video
         key:
-          model: MiniMax-H3
+          model: minimax/hailuo-3-max
           prompt: "{{ $json['visual_prompt'] }}"
           duration_seconds: 6
-          resolution: 768P
+          resolution: 768p
           ratio: "9:16"
-          prompt_expansion_mode: balanced
 
     # The one call in this flow that spends money, and the only step here with
-    # retries deliberately OFF.
+    # retries deliberately OFF. Paid from the OpenRouter credits the narration
+    # uses (Wave 5): MiniMax H3 Max at 768p, $0.08 per generated second on
+    # 2026-09-23.
     #
-    # MiniMax documents no client idempotency key for create (§5.3), so a
+    # OpenRouter documents no client idempotency key for create (§5.3), so a
     # retried submit is a second charge with no way to recognise the first.
     # The node refuses the ambiguous cases itself — a 5xx, a timeout, a dropped
     # connection and a 2xx with no task id all raise a named, non-retryable
@@ -84,17 +85,16 @@ spec:
     # setting has to agree, or the engine would re-run the activity underneath
     # that judgement and undo it.
     - id: submit
-      type: shortvideo.minimax_submit
+      type: shortvideo.openrouter_video_submit
       position: [280.0, 160.0]
       params:
-        model: MiniMax-H3
+        model: minimax/hailuo-3-max
         prompt: "{{ $json['visual_prompt'] }}"
         duration_seconds: 6
-        resolution: 768P
+        resolution: 768p
         ratio: "9:16"
-        prompt_expansion_mode: balanced
       credentials:
-        minimax_api: minimax
+        openrouter_api: openrouter
       settings:
         # A create returns a task id in seconds; it does not wait for the clip.
         timeout_s: 120
@@ -110,7 +110,7 @@ spec:
     # own message (nothing was cancelled, the clip is still billing, run this
     # again to collect it) is the one an author needs to see.
     - id: collect
-      type: shortvideo.minimax_collect
+      type: shortvideo.openrouter_video_collect
       position: [520.0, 160.0]
       params:
         task_id: "{{ $json['task_id'] }}"
@@ -118,12 +118,10 @@ spec:
         poll_interval_seconds: 5
         max_download_megabytes: 256
         output_binary_property: video
-        # No rate here on purpose: it comes off the `minimax_api` credential,
-        # where it is required and answered once for the account. Set this only
-        # to price one step differently — another plan, or a rate pinned in the
-        # flow itself.
+        # No rate anywhere: the cost is OpenRouter's own `usage.cost` for the
+        # job, reported to the workspace budget as it was charged.
       credentials:
-        minimax_api: minimax
+        openrouter_api: openrouter
       settings:
         timeout_s: 660
         retry_on_fail: true
@@ -155,8 +153,8 @@ spec:
     # else — no beat fields, no attachment — so everything the parent needs is
     # put back here, read from the nodes that still hold it.
     #
-    # Note what does NOT need restating: `shortvideo.minimax_submit` and
-    # `minimax_collect` both layer their output over the item they were given,
+    # Note what does NOT need restating: `shortvideo.openrouter_video_submit`
+    # and `openrouter_video_collect` both layer their output over the item they were given,
     # so the beat's own fields survive all the way to `save_clip`. Only the
     # save drops them. Reading by `$item` is safe because `batch_size: 1` means
     # this body always sees exactly one item, so `$item` is 0.

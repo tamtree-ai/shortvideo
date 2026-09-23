@@ -4,10 +4,11 @@
 #         -> assemble -> draft render -> approval -> final render -> save
 #
 # WHERE THE MONEY IS, in order: the script (one model call), the narration (one
-# Google synthesis), then one MiniMax generation per beat — the expensive
-# part — then two local renders that cost CPU but no provider. Everything that
-# can refuse a run does so before the first MiniMax submit: the shot list
-# checks the script, and the narration step refuses an unpriced call.
+# OpenRouter TTS call per beat's phrase), then one MiniMax H3 Max generation per
+# beat through OpenRouter — the expensive part — then two local renders that
+# cost CPU but no provider. Narration and footage are paid from one OpenRouter
+# balance (Wave 5). Everything that can refuse a run does so before the first
+# video submit: the shot list checks the script before anything is bought.
 #
 # WHAT A REVIEWER APPROVES is the draft: the same timeline at half size, with
 # the same cuts, captions and mix. The final render refuses any timeline whose
@@ -106,32 +107,31 @@ spec:
         attachment: audio
         key:
           phrases: "{{ $json['phrases'] }}"
-          language_code: en-US
-          voice_name: en-US-Neural2-C
-          audio_encoding: LINEAR16
+          voice: Zephyr
+          phrase_gap_seconds: 0.15
 
-    # One synthesis for the whole short, so the voice is continuous and the
-    # timing comes from one clock. Phrase-list mode turns each beat's line into
-    # a marked phrase; the marks come back as each beat's start time.
+    # Narration through OpenRouter (Gemini 3.1 Flash TTS), paid from the same
+    # credits as the clips. Phrase-list mode synthesizes each beat's line on its
+    # own and stitches them, so every `beat-<N>` mark's start time is measured
+    # from the audio itself — exact caption timing without provider marks. The
+    # cost is OpenRouter's own figure; there is no rate to fill in.
     #
-    # The price is left at 0 on purpose, and the step refuses to run with it:
-    # fill in your voice tier's rate from Google's pricing page (§7 — no
-    # vendor price ships in a default).
+    # The trade-off, accepted in Wave 5 (OR-7): each phrase is its own take, so
+    # the read is less continuous than one synthesis of the whole script.
+    # `phrase_gap_seconds` softens the seams; it does not remove them.
     - id: narrate
-      type: shortvideo.google_tts
+      type: shortvideo.openrouter_tts
       position: [760.0, 280.0]
       params:
         input_mode: captions
         captions: "{{ $json['phrases'] }}"
-        language_code: en-US
-        voice_name: en-US-Neural2-C
-        audio_encoding: LINEAR16
+        voice: Zephyr
+        phrase_gap_seconds: 0.15
         output_binary_property: audio
-        require_timepoints: true
       credentials:
-        google_service_account: google
+        openrouter_api: openrouter
       settings:
-        timeout_s: 120
+        timeout_s: 300
         retry_on_fail: true
         max_retries: 2
 

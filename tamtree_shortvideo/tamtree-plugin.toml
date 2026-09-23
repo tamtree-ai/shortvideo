@@ -25,8 +25,9 @@ permissions = ["network", "secrets"]
 #   texttospeech.googleapis.com — narration synthesis (V1.2)
 #   api.minimax.io            — video generation: create, query, cancel (V2)
 #   openrouter.ai             — narration via Gemini 3.1 Flash TTS, and the
-#                                per-call cost lookup on the same host (V0.2b)
-# Not listed, and deliberately: the finished clip is fetched from a signed,
+#                                per-call cost lookup on the same host (V0.2b);
+#                                video create, poll and the clip download (V5)
+# Not listed, and deliberately: a MiniMax-direct clip is fetched from a signed,
 # time-limited URL on a MiniMax-controlled CDN whose host MiniMax does not
 # document. It is learned from a real response, and no real response has been
 # seen yet (no key). Listing a guessed host would make this inventory a
