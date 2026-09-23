@@ -125,12 +125,16 @@ class ReuseNode(ProgrammaticNode):
                     "description": (
                         "A short lowercase word the saved name starts with — clip, narration."
                     ),
+                    # Part of every saved name: an expression here would let one
+                    # run's data decide which library entries count as a match.
+                    "literal_only": True,
                 },
                 {
                     "name": "key",
                     "label": "What produced it",
                     "type": "json",
                     "default": {},
+                    "required": True,
                     "description": (
                         "Every input that changes the artifact — model, prompt, duration, "
                         "resolution, voice. The same values find the same artifact; leaving "

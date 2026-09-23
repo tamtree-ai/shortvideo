@@ -18,7 +18,7 @@ testing = ["tamtree-plugin-sdk[testing]"]
 dev = [
     "pytest>=8",
     # Only the flow tests read YAML, and only to check the shipped
-    # `flows/*.yaml` against the manifests. Not a runtime dependency: nothing
+    # `template/flows/*.yaml` against the manifests. Not a runtime dependency: nothing
     # in `tamtree_shortvideo` parses YAML.
     "pyyaml>=6",
     "pytest-asyncio>=0.24",

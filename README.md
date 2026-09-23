@@ -315,15 +315,21 @@ including why there is a loopback web server inside it and what it deliberately
 does not do (integrated loudness — applied upstream, above — and sidechain
 ducking).
 
-## Flows
+## Flows — the `Short-form video` template
 
-Two importable flows ship in `flows/`. They are Wave 2's harness, not the
-finished product — Wave 4's `Short-form video` template will use the same body.
+`template/` is an installable template package (`template.yaml` plus three
+flows); its own [README](template/README.md) is the user-facing guide —
+setup, what a run can cost, approving, and recovering by re-running.
 
 | File | |
 |---|---|
-| `generate-one-beat.yaml` | The loop body: submit → collect → save asset → relabel. Starts with a Sub-workflow Trigger, so a Loop node in the parent runs it once per beat. |
-| `beats-to-clips.yaml` | The smallest parent that makes the body runnable: a beat list in, a clip per beat out. |
+| `template/flows/short-form-video.yaml` | The template: topic → script → shot list → narration → per-beat loop → assemble → draft → approval → final → save. |
+| `template/flows/generate-one-beat.yaml` | The loop body: reuse a saved clip, or submit → collect → save asset → relabel. Starts with a Sub-workflow Trigger, so a Loop node in the parent runs it once per beat. |
+| `template/flows/beats-to-clips.yaml` | Wave 2's harness: the smallest parent that makes the body runnable, a beat list in, a clip per beat out. |
+
+`tests/test_template_package.py` checks the package the way an install does;
+run it from the product tree to include the server's own loader, secret scan
+and plugin-requirement check.
 
 **Publish the body before the parent can run.** A Loop resolves its body's
 published version at plan time, and installed flows arrive as drafts.

@@ -24,7 +24,7 @@ from tamtree_sdk.flowdef import FlowDefinition
 
 from tamtree_shortvideo import NODES
 
-FLOWS = Path(__file__).resolve().parent.parent / "flows"
+FLOWS = Path(__file__).resolve().parent.parent / "template" / "flows"
 BODY = "generate-one-beat"
 PARENT = "beats-to-clips"
 TEMPLATE = "short-form-video"

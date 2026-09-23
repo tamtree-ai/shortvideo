@@ -1,0 +1,63 @@
+apiVersion: tamtree.dev/v1
+kind: Template
+metadata:
+  name: short-form-video
+  version: 0.1.0
+  description: >-
+    Type a topic, get a narrated 1080x1920 vertical short with captions, and
+    approve it before it is final. SELF-HOSTED ONLY: the render runs Chrome and
+    ffmpeg in the worker's local sandbox, which hosted multi-tenant Tamtree
+    refuses before reading any input. Needs the `shortvideo` plugin installed on
+    the worker, a Google Cloud service account with Text-to-Speech enabled, and
+    a MiniMax API key. MOST ONE RUN CAN SPEND: 1 script call to your workspace's
+    default chat model, 1 Google Text-to-Speech synthesis, and at most 8 MiniMax
+    video generations (6 s, 768P each; the shot list refuses a script with more
+    beats before anything is paid for), then 2 local renders that cost CPU but
+    no provider. HOW LONG: each generation is given up to 10 minutes, so the
+    worst case before the draft is about 80 minutes; a render measured about 1
+    second per second of video (5.1 s wall for a 5 s clip), and each render is
+    capped at 15 minutes of CPU. A re-run with the same shot list buys nothing
+    it already has — see the README.
+  license: Apache-2.0
+  publisher: tamtree-community
+  homepage: https://github.com/tamtree-ai/shortvideo
+  repository: https://github.com/tamtree-ai/shortvideo
+  catalog:
+    title: Short-form video
+    category: content
+    integrations: []
+    primitives: [pipeline]
+    tags: [video, shorts, self-hosted-only, approval, minimax, google-tts]
+    summary: >-
+      A topic in, an approved vertical short out: script, narration, one
+      generated clip per beat, captions, a half-size draft for you to approve,
+      then the final render. Self-hosted only. At most 1 script call, 1
+      synthesis and 8 video generations per run, and a re-run reuses every
+      clip and narration it already paid for.
+    setup_minutes: 30
+spec:
+  requires:
+    # Bound at install to the importer's own credentials. Slot names are what
+    # the flows' `credentials:` blocks reference; nothing here names a key.
+    credentials:
+      - type: google_service_account
+        slot: google
+      - type: minimax_api
+        slot: minimax
+    plugins:
+      - name: tamtree-nodes
+        contracts:
+          plugin: "^0.1"
+      - name: tamtree-ai
+        contracts:
+          plugin: "^0.1"
+      # The six shortvideo.* nodes and the two curated render backends. Its
+      # own contracts pin (the SDK floor) is enforced when the plugin loads.
+      - name: shortvideo
+        contracts:
+          plugin: "^0.1"
+  resources:
+    # The body first: the Loop resolves its published version at plan time.
+    - flows/generate-one-beat.yaml
+    - flows/short-form-video.yaml
+    - flows/beats-to-clips.yaml
