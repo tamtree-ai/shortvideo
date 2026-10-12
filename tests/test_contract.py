@@ -8,7 +8,6 @@ node that cannot execute proves only that the manifest parses.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 from decimal import Decimal
@@ -34,10 +33,6 @@ from tamtree_shortvideo.openrouter_tts import OpenRouterTtsNode
 from tamtree_shortvideo.shot_list import ShotListNode
 from tests.audio_fixtures import pcm_bytes, wav_bytes
 from tests.conftest import key_file_payload
-
-#: See `tests/test_openrouter.py` for why this has to be captured before any
-#: test monkeypatches `openrouter.asyncio.sleep`.
-_REAL_SLEEP = asyncio.sleep
 
 TOKEN = "ya29.contract-test-token"
 
@@ -195,20 +190,26 @@ class TestMinimaxCancelContract(NodeContract):
         )
 
 
-def _openrouter_responses(
-    *, generation_id: str = "gen-1", cost: float = 0.002
-) -> list[httpx.Response]:
-    """One `/audio/speech` answer and the generation-cost lookup behind it —
-    the two calls `text` mode makes per item."""
+def _rates_response() -> httpx.Response:
+    """The model's public endpoint listing, as OpenRouter served it on
+    2026-10-09: $1/M prompt, $20/M completion tokens."""
+    return httpx.Response(
+        200,
+        json={
+            "data": {"endpoints": [{"pricing": {"prompt": "0.000001", "completion": "0.00002"}}]}
+        },
+    )
+
+
+def _openrouter_responses(*, generation_id: str = "gen-1") -> list[httpx.Response]:
+    """The rate listing, then one `/audio/speech` answer — the two calls
+    `text` mode makes for one item."""
     return [
+        _rates_response(),
         httpx.Response(
             200,
             content=pcm_bytes(seconds=1.0),
             headers={"X-Generation-Id": generation_id},
-        ),
-        httpx.Response(
-            200,
-            json={"data": {"total_cost": cost, "tokens_prompt": 3, "tokens_completion": 40}},
         ),
     ]
 
@@ -260,23 +261,12 @@ async def test_openrouter_captions_mode_stitches_exact_per_phrase_timings() -> N
         .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
         .responses(
             [
+                _rates_response(),
                 httpx.Response(
                     200, content=pcm_bytes(seconds=1.0), headers={"X-Generation-Id": "gen-1"}
                 ),
                 httpx.Response(
-                    200,
-                    json={
-                        "data": {"total_cost": 0.001, "tokens_prompt": 2, "tokens_completion": 20}
-                    },
-                ),
-                httpx.Response(
                     200, content=pcm_bytes(seconds=0.5), headers={"X-Generation-Id": "gen-2"}
-                ),
-                httpx.Response(
-                    200,
-                    json={
-                        "data": {"total_cost": 0.0007, "tokens_prompt": 2, "tokens_completion": 10}
-                    },
                 ),
             ]
         )
@@ -292,25 +282,48 @@ async def test_openrouter_captions_mode_stitches_exact_per_phrase_timings() -> N
     assert data["captions"][1]["end_seconds"] == pytest.approx(1.6)
     assert data["usage"]["calls"] == 2
     assert data["priced"] is True
-    assert data["cost_usd"] == str(Decimal("0.001") + Decimal("0.0007"))
+    assert data["cost_basis"] == "estimated"
+    assert data["generation_ids"] == ["gen-1", "gen-2"]
+    # "First line." is 11 chars -> 3 prompt tokens, 1.0 s -> 50 completion tokens;
+    # "Second line." is 12 chars -> 3, 0.5 s -> 25.
+    assert data["usage"]["tokens_prompt"] == 6
+    assert data["usage"]["tokens_completion"] == 75
+    assert Decimal(data["cost_usd"]) == Decimal("0.000006") + Decimal("0.0015")
 
 
-async def test_openrouter_reports_unpriced_when_the_ledger_never_catches_up(monkeypatch) -> None:
-    """A ledger that never resolves must not silently under-report as zero —
-    the call is flagged unpriced, matching `minimax_collect`'s posture."""
-    monkeypatch.setattr(
-        "tamtree_shortvideo.openrouter.asyncio.sleep", lambda seconds: _REAL_SLEEP(0)
-    )
+async def test_openrouter_reports_each_call_to_the_ledger_with_its_estimate() -> None:
+    """The estimate reaches `report_usage` per call, so the engine writes it to
+    the usage ledger — the point of estimating at all."""
     kit = (
         NodeTestKit(OpenRouterTtsNode())
-        .params(input_mode="text", text="Whatever the ledger says later.", voice="Zephyr")
+        .params(input_mode="text", text="Four words, roughly said.", voice="Zephyr")
+        .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
+        .responses(_openrouter_responses())
+    )
+    ctx = kit.context()
+    await OpenRouterTtsNode().execute(ctx)
+
+    (record,) = ctx.usage
+    assert record["provider"] == "openrouter"
+    assert record["tokens_in"] == 7  # 25 chars / 4, rounded up
+    assert record["tokens_out"] == 50  # 1.0 s of audio
+    assert record["cost_usd"] == Decimal("0.0010070000")
+    assert record["cost_estimated"] is True
+
+
+async def test_openrouter_reports_unpriced_when_the_rates_cannot_be_read() -> None:
+    """No rate, no guess: the call is flagged unpriced rather than $0, and the
+    audio still comes back — it is already paid for."""
+    kit = (
+        NodeTestKit(OpenRouterTtsNode())
+        .params(input_mode="text", text="Whatever the rate is today.", voice="Zephyr")
         .credentials({OPENROUTER_CREDENTIAL_TYPE: {"token": "sk-or-v1-contract-test"}})
         .responses(
             [
+                httpx.Response(503),
                 httpx.Response(
                     200, content=pcm_bytes(seconds=1.0), headers={"X-Generation-Id": "gen-1"}
                 ),
-                *([httpx.Response(404)] * 4),  # exhausts the bounded retry
             ]
         )
     )
@@ -320,6 +333,8 @@ async def test_openrouter_reports_unpriced_when_the_ledger_never_catches_up(monk
 
     assert data["priced"] is False
     assert data["cost_usd"] == ""
+    assert data["cost_basis"] == ""
+    assert data["generation_ids"] == ["gen-1"]
 
 
 class TestShotListContract(NodeContract):

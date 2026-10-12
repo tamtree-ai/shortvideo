@@ -33,14 +33,29 @@ syntheses sound like stitched together. `phrase_gap_seconds` exists to soften
 the seam, not to hide that there is one. This is a real, audible difference
 worth expecting, not a bug in the stitching.
 
-**Why cost comes from a lookup and not a param.** See `openrouter.py`'s module
-docstring — `total_cost` on the generation endpoint is a real number from
-OpenRouter's own ledger, not a rate this node would otherwise have to ask the
-operator to keep current.
+**Why cost is estimated, not looked up.** OpenRouter does keep the real
+figure — `total_cost` on `GET /api/v1/generation?id=…` — but a live check on
+2026-10-09 found a speech generation takes 40–60 s to appear there, and this
+node used to give up after 3.5 s, so every narration was reported unpriced.
+Waiting a minute per step to read a number is not worth it; estimating it now
+is. The estimate is today's listed rate (`openrouter.speech_rates`, read live)
+times tokens counted from what this node already knows:
+
+- **input:** one token per `_CHARS_PER_INPUT_TOKEN` characters of text;
+- **output:** `_OUTPUT_TOKENS_PER_AUDIO_SECOND` per second of audio returned.
+
+Measured against four billed calls on 2026-10-09: input was 3/10/29/74 tokens
+for 12/37/115/294 characters, and output ran at 50–54 tokens per audio second
+for phrase-length clips but 25 for one 22 s paragraph. 50 is taken, so a long
+single-pass reading is over-estimated rather than under. Each call's
+`generation_id` is kept on the output so the billed figure can be checked by
+hand. If the rates cannot be read, the call reports its estimated tokens with
+no cost and lands `unpriced`, never `$0`.
 """
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import Any, ClassVar, Final
 
@@ -60,9 +75,10 @@ from tamtree_shortvideo.openrouter import (
     GenerationCost,
     OpenRouterError,
     OpenRouterUnavailable,
+    SpeechRates,
     auth_headers,
-    generation_cost,
     raise_for_response,
+    speech_rates,
 )
 from tamtree_shortvideo.pcm import pcm_duration_seconds, silence, wrap_pcm_as_wav
 from tamtree_shortvideo.ssml import SsmlPhrase, parse_phrases
@@ -77,6 +93,14 @@ NODE_NAME: Final = "shortvideo.openrouter_tts"
 _DEFAULT_VOICE: Final = "Zephyr"
 
 _DEFAULT_PHRASE_GAP_SECONDS: Final = 0.15
+
+#: The cost estimate's token counts — see the module docstring for the
+#: measurements behind both.
+_CHARS_PER_INPUT_TOKEN: Final = 4
+_OUTPUT_TOKENS_PER_AUDIO_SECOND: Final = 50
+
+#: `usage_ledger.cost_usd` is `numeric(18,10)`.
+_COST_QUANTUM: Final = Decimal("0.0000000001")
 
 
 def _text(value: Any) -> str:
@@ -172,6 +196,8 @@ class OpenRouterTtsNode(ProgrammaticNode):
                             },
                             "priced": {"type": "boolean"},
                             "cost_usd": {"type": "string"},
+                            "cost_basis": {"type": "string"},
+                            "generation_ids": {"type": "array", "items": {"type": "string"}},
                             "input_mode": {"type": "string"},
                         },
                         "required": [
@@ -262,20 +288,31 @@ class OpenRouterTtsNode(ProgrammaticNode):
 
     async def execute(self, ctx: ExecutionContext) -> dict[str, list[Item]]:
         headers = await auth_headers(ctx)
+        rates = await speech_rates(ctx)
         outputs: list[Item] = []
         for item in ctx.input_items() or [Item()]:
-            outputs.append(await self._synthesize(ctx, item, headers))
+            outputs.append(await self._synthesize(ctx, item, headers, rates))
         return {"main": outputs}
 
-    async def _synthesize(self, ctx: ExecutionContext, item: Item, headers: dict[str, str]) -> Item:
+    async def _synthesize(
+        self,
+        ctx: ExecutionContext,
+        item: Item,
+        headers: dict[str, str],
+        rates: SpeechRates | None,
+    ) -> Item:
         mode = (_text(ctx.param("input_mode", item=item)) or "text").lower()
         voice = _text(ctx.param("voice", item=item)).strip() or _DEFAULT_VOICE
         binary_property = _text(ctx.param("output_binary_property", item=item)) or "audio"
 
         if mode == "text":
-            pcm, marks, captions, calls = await self._synthesize_text(ctx, item, voice, headers)
+            pcm, marks, captions, calls = await self._synthesize_text(
+                ctx, item, voice, headers, rates
+            )
         elif mode == "captions":
-            pcm, marks, captions, calls = await self._synthesize_captions(ctx, item, voice, headers)
+            pcm, marks, captions, calls = await self._synthesize_captions(
+                ctx, item, voice, headers, rates
+            )
         else:
             raise NodeConfigurationError(
                 f"Unknown input mode {mode!r} — choose 'text' or 'captions'."
@@ -311,6 +348,8 @@ class OpenRouterTtsNode(ProgrammaticNode):
             },
             "priced": total_cost is not None,
             "cost_usd": str(total_cost) if total_cost is not None else "",
+            "cost_basis": "estimated" if total_cost is not None else "",
+            "generation_ids": [call.generation_id for call in calls if call.generation_id],
             "input_mode": mode,
         }
         return Item.model_validate(
@@ -321,20 +360,30 @@ class OpenRouterTtsNode(ProgrammaticNode):
         )
 
     async def _synthesize_text(
-        self, ctx: ExecutionContext, item: Item, voice: str, headers: dict[str, str]
-    ) -> tuple[bytes, list[dict[str, Any]], list[dict[str, Any]], list[GenerationCost]]:
+        self,
+        ctx: ExecutionContext,
+        item: Item,
+        voice: str,
+        headers: dict[str, str],
+        rates: SpeechRates | None,
+    ) -> tuple[bytes, list[dict[str, Any]], list[dict[str, Any]], list[_Call]]:
         text = _text(ctx.param("text", item=item))
         if not text.strip():
             raise NodeConfigurationError(
                 "Text is empty, so there is nothing to synthesize. Map this step's text from "
                 "the script step, or type it in."
             )
-        pcm, call = await self._call(ctx, text, voice=voice, headers=headers)
+        pcm, call = await self._call(ctx, text, voice=voice, headers=headers, rates=rates)
         return pcm, [], [], [call]
 
     async def _synthesize_captions(
-        self, ctx: ExecutionContext, item: Item, voice: str, headers: dict[str, str]
-    ) -> tuple[bytes, list[dict[str, Any]], list[dict[str, Any]], list[GenerationCost]]:
+        self,
+        ctx: ExecutionContext,
+        item: Item,
+        voice: str,
+        headers: dict[str, str],
+        rates: SpeechRates | None,
+    ) -> tuple[bytes, list[dict[str, Any]], list[dict[str, Any]], list[_Call]]:
         phrases: list[SsmlPhrase] = parse_phrases(_caption_list(ctx.param("captions", item=item)))
         gap_seconds = max(
             0.0,
@@ -348,11 +397,13 @@ class OpenRouterTtsNode(ProgrammaticNode):
         chunks: list[bytes] = []
         marks: list[dict[str, Any]] = []
         captions: list[dict[str, Any]] = []
-        calls: list[GenerationCost] = []
+        calls: list[_Call] = []
         cumulative = 0.0
 
         for index, phrase in enumerate(phrases):
-            pcm, call = await self._call(ctx, phrase.text, voice=voice, headers=headers)
+            pcm, call = await self._call(
+                ctx, phrase.text, voice=voice, headers=headers, rates=rates
+            )
             calls.append(call)
             phrase_seconds = pcm_duration_seconds(pcm)
             start = cumulative
@@ -375,23 +426,67 @@ class OpenRouterTtsNode(ProgrammaticNode):
         return b"".join(chunks), marks, captions, calls
 
     async def _call(
-        self, ctx: ExecutionContext, text: str, *, voice: str, headers: dict[str, str]
-    ) -> tuple[bytes, GenerationCost]:
+        self,
+        ctx: ExecutionContext,
+        text: str,
+        *,
+        voice: str,
+        headers: dict[str, str],
+        rates: SpeechRates | None,
+    ) -> tuple[bytes, _Call]:
         pcm, generation_id = await _speak(ctx, text, voice=voice, headers=headers)
-        cost = await generation_cost(ctx, generation_id, headers=headers)
-        call = (
-            cost
-            if cost is not None
-            else GenerationCost(tokens_prompt=0, tokens_completion=0, total_cost_usd=None)
-        )
+        call = _estimate(text, pcm, rates, generation_id=generation_id)
         ctx.report_usage(
             tokens_in=call.tokens_prompt,
             tokens_out=call.tokens_completion,
             provider="openrouter",
             model=MODEL_ID,
             cost_usd=call.total_cost_usd,
+            # Contracts 2.3.0: the run counts this as an estimate, not the bill.
+            cost_estimated=call.total_cost_usd is not None,
         )
         return pcm, call
+
+
+class _Call(GenerationCost):
+    """One `/audio/speech` call's estimated usage, and the id OpenRouter will
+    eventually bill it under."""
+
+    __slots__ = ("generation_id",)
+
+    def __init__(
+        self,
+        *,
+        generation_id: str,
+        tokens_prompt: int,
+        tokens_completion: int,
+        total_cost_usd: Decimal | None,
+    ) -> None:
+        super().__init__(
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+            total_cost_usd=total_cost_usd,
+        )
+        self.generation_id = generation_id
+
+
+def _estimate(text: str, pcm: bytes, rates: SpeechRates | None, *, generation_id: str) -> _Call:
+    """What one call most likely cost — see the module docstring for the basis."""
+    tokens_prompt = math.ceil(len(text) / _CHARS_PER_INPUT_TOKEN)
+    tokens_completion = math.ceil(pcm_duration_seconds(pcm) * _OUTPUT_TOKENS_PER_AUDIO_SECOND)
+    cost = (
+        (tokens_prompt * rates.prompt_usd + tokens_completion * rates.completion_usd).quantize(
+            _COST_QUANTUM
+        )
+        if rates is not None
+        else None
+    )
+    return _Call(
+        generation_id=generation_id,
+        tokens_prompt=tokens_prompt,
+        tokens_completion=tokens_completion,
+        total_cost_usd=cost,
+    )
 
 
 def _caption_list(value: Any) -> list[Any]:

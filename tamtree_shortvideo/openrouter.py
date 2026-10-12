@@ -42,9 +42,11 @@ __all__ = [
     "GenerationCost",
     "OpenRouterError",
     "OpenRouterUnavailable",
+    "SpeechRates",
     "auth_headers",
     "generation_cost",
     "raise_for_response",
+    "speech_rates",
 ]
 
 API_HOST: Final = "https://openrouter.ai"
@@ -58,6 +60,9 @@ GENERATION_URL: Final = f"{API_HOST}/api/v1/generation"
 #: second OpenRouter TTS model is a second node, not a param on this one — it
 #: would bring its own voice list, output shape and pricing unit.
 MODEL_ID: Final = "google/gemini-3.1-flash-tts-preview"
+
+#: The model's public endpoint listing: today's per-token rates, no key needed.
+ENDPOINTS_URL: Final = f"{API_HOST}/api/v1/models/{MODEL_ID}/endpoints"
 
 #: How long the bounded retry waits for the ledger to catch up, per attempt.
 #: Three tries, backing off — under 4 seconds total, worth spending once per
@@ -101,6 +106,16 @@ class GenerationCost:
         self.tokens_prompt = tokens_prompt
         self.tokens_completion = tokens_completion
         self.total_cost_usd = total_cost_usd
+
+
+class SpeechRates:
+    """What OpenRouter lists one prompt and one completion token at, in USD."""
+
+    __slots__ = ("prompt_usd", "completion_usd")
+
+    def __init__(self, *, prompt_usd: Decimal, completion_usd: Decimal) -> None:
+        self.prompt_usd = prompt_usd
+        self.completion_usd = completion_usd
 
 
 async def auth_headers(ctx: ExecutionContext) -> dict[str, str]:
@@ -189,3 +204,42 @@ def _int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+async def speech_rates(ctx: ExecutionContext) -> SpeechRates | None:
+    """Today's listed rates for `MODEL_ID`, or `None` if the listing could not
+    be read.
+
+    Read live rather than pinned for the same reason the module docstring
+    gives for `total_cost`: a rate copied into this file ages. When the model
+    is served by more than one endpoint, the dearest is taken — an estimate
+    that errs high is the safer one to put in front of a budget.
+    """
+    try:
+        response = await ctx.http().get(ENDPOINTS_URL)
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    body = _body(response)
+    data = body.get("data") if isinstance(body, dict) else None
+    endpoints = data.get("endpoints") if isinstance(data, dict) else None
+    rates: list[SpeechRates] = []
+    for endpoint in endpoints if isinstance(endpoints, list) else []:
+        pricing = endpoint.get("pricing") if isinstance(endpoint, dict) else None
+        if not isinstance(pricing, dict):
+            continue
+        prompt, completion = _rate(pricing.get("prompt")), _rate(pricing.get("completion"))
+        if prompt is not None and completion is not None:
+            rates.append(SpeechRates(prompt_usd=prompt, completion_usd=completion))
+    if not rates:
+        return None
+    return max(rates, key=lambda rate: (rate.completion_usd, rate.prompt_usd))
+
+
+def _rate(value: Any) -> Decimal | None:
+    try:
+        rate = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+    return rate if rate.is_finite() and rate >= 0 else None
