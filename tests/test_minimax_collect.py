@@ -454,7 +454,7 @@ async def test_the_beats_own_json_and_binaries_travel_with_the_clip() -> None:
     """§9's preservation rule, and the reason the Loop body composes: the
     narration generated in Wave 1 has to still be attached when the footage
     arrives."""
-    from tamtree_sdk.items import BinaryRef
+    from tamtree_plugin_sdk.items import BinaryRef
 
     narration = BinaryRef(
         id="bin_narration",

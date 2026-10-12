@@ -38,7 +38,7 @@ from tamtree_nodes.curated import CuratedCliToolRuntime
 from tamtree_nodes.sandbox import netns_isolation_available
 from tamtree_plugin_sdk import BinaryRef, CompiledCommand, Item, PresetOutput, ToolSpec
 from tamtree_plugin_sdk.testing import FakeExecutionContext
-from tamtree_sdk.testing.fakes import FakeBinaryStore
+from tamtree_plugin_sdk.testing.fakes import FakeBinaryStore
 
 from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.loudness import LoudnessBackend

@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 import yaml
-from tamtree_sdk.flowdef import FlowDefinition
+from tamtree_kernel.flowdef import FlowDefinition
 
 from tamtree_shortvideo import NODES
 

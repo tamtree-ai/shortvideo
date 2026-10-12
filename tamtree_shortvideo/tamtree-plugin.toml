@@ -64,7 +64,7 @@ egress_allowlist = [
 # child died during Node's startup on every worker. Neither is optional for
 # this plugin — they are the two things that make `shortvideo.compose`
 # possible at all.
-sdk = "^1.36"
+sdk = "^2.0"
 
 # Documentation for whoever reads the boot inventory; `pyproject.toml` is what
 # the registry actually discovers, and nothing validates the two against each

@@ -761,32 +761,42 @@ wheels = [
 ]
 
 [[package]]
-name = "tamtree-plugin-sdk"
-version = "0.1.0.dev0"
-source = { editable = "../../tamtree/packages/plugin-sdk" }
-dependencies = [
-    { name = "tamtree-sdk" },
-]
+name = "tamtree-exec"
+version = "0.2.0"
+source = { editable = "../../tamtree/packages/exec" }
 
-[package.optional-dependencies]
-testing = [
-    { name = "tamtree-sdk", extra = ["testing"] },
+[[package]]
+name = "tamtree-kernel"
+version = "0.1.0.dev0"
+source = { editable = "../../tamtree/packages/kernel" }
+dependencies = [
+    { name = "defusedxml" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "tamtree-exec" },
+    { name = "tamtree-plugin-sdk" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "tamtree-sdk", editable = "../../tamtree/packages/sdk" },
-    { name = "tamtree-sdk", extras = ["testing"], marker = "extra == 'testing'", editable = "../../tamtree/packages/sdk" },
+    { name = "defusedxml", specifier = ">=0.7" },
+    { name = "fastapi" },
+    { name = "grpcio", marker = "extra == 'runtime-client'", specifier = ">=1.60" },
+    { name = "httpx" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pytest", marker = "extra == 'testing'" },
+    { name = "pytest-asyncio", marker = "extra == 'testing'" },
+    { name = "tamtree-exec", editable = "../../tamtree/packages/exec" },
+    { name = "tamtree-plugin-sdk", editable = "../../tamtree/packages/plugin-sdk" },
+    { name = "tamtree-runtime-proto", marker = "extra == 'runtime-client'", specifier = ">=0.1,<1", index = "https://test.pypi.org/simple/" },
 ]
-provides-extras = ["testing"]
+provides-extras = ["testing", "runtime-client"]
 
 [[package]]
-name = "tamtree-sdk"
-version = "0.1.0.dev0"
-source = { editable = "../../tamtree/packages/sdk" }
+name = "tamtree-plugin-sdk"
+source = { editable = "../../tamtree/packages/plugin-sdk" }
 dependencies = [
-    { name = "defusedxml" },
-    { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
@@ -799,8 +809,6 @@ testing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "defusedxml", specifier = ">=0.7" },
-    { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pytest", marker = "extra == 'testing'" },
@@ -824,6 +832,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pyyaml" },
     { name = "ruff" },
+    { name = "tamtree-kernel" },
 ]
 testing = [
     { name = "tamtree-plugin-sdk", extra = ["testing"] },
@@ -837,6 +846,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
+    { name = "tamtree-kernel", marker = "extra == 'dev'", editable = "../../tamtree/packages/kernel" },
     { name = "tamtree-plugin-sdk", editable = "../../tamtree/packages/plugin-sdk" },
     { name = "tamtree-plugin-sdk", extras = ["testing"], marker = "extra == 'testing'", editable = "../../tamtree/packages/plugin-sdk" },
 ]

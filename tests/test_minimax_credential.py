@@ -9,7 +9,7 @@ and a probe URL that answers without generating anything.
 from __future__ import annotations
 
 from tamtree_plugin_sdk import CredentialTypeSpec
-from tamtree_sdk.http_client import credential_auth_headers
+from tamtree_plugin_sdk.http_client import credential_auth_headers
 
 from tamtree_shortvideo.credentials import (
     GOOGLE_SERVICE_ACCOUNT_CREDENTIAL,

@@ -8,13 +8,8 @@ changes what the user is asked for and what `google_auth` then fails to find.
 from importlib.metadata import EntryPoint
 
 import pytest
-from tamtree_plugin_sdk import (
-    GROUP_CREDENTIAL_TYPES,
-    GROUP_NODES,
-    CredentialTypeSpec,
-    PluginRegistry,
-)
-from tamtree_sdk import PluginRefusedError
+from tamtree_kernel import PluginRefusedError, PluginRegistry
+from tamtree_plugin_sdk import GROUP_CREDENTIAL_TYPES, GROUP_NODES, CredentialTypeSpec
 
 from tamtree_shortvideo import GOOGLE_SERVICE_ACCOUNT_CREDENTIAL
 from tamtree_shortvideo.credentials import CREDENTIAL_TYPE, KEY_FIELD

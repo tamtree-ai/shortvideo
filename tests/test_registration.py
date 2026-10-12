@@ -9,13 +9,8 @@ from importlib.metadata import EntryPoint
 from importlib.resources import files
 
 import pytest
-from tamtree_plugin_sdk import (
-    CONTRACTS_VERSION,
-    GROUP_CREDENTIAL_TYPES,
-    GROUP_NODES,
-    PluginRegistry,
-)
-from tamtree_sdk import PluginRefusedError
+from tamtree_kernel import PluginRefusedError, PluginRegistry
+from tamtree_plugin_sdk import CONTRACTS_VERSION, GROUP_CREDENTIAL_TYPES, GROUP_NODES
 
 from tamtree_shortvideo import NODES
 from tamtree_shortvideo.credentials import (
@@ -160,8 +155,9 @@ def test_plugin_discovers_its_nodes() -> None:
     # raised it from ^1.33 for `get_bounded`, which does not exist below 1.34;
     # V3.2 raised it again to ^1.36 for the curated-backend contract (1.35.0)
     # and `MediaLimits.limit_address_space` (1.36.0), neither of which exists
-    # below it.
-    assert plugin.manifest.contracts.sdk == "^1.36"
+    # below it. The SDK split (2.0.0) moved the registry into `tamtree_kernel`,
+    # so it is ^2.0.
+    assert plugin.manifest.contracts.sdk == "^2.0"
     # And the floor has to be one the SDK in this tree actually clears —
     # pinning above what is installed would pass every test here and refuse
     # at boot, which is the one place the mismatch is expensive.

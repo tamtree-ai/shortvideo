@@ -16,6 +16,8 @@ dependencies = [
 [project.optional-dependencies]
 testing = ["tamtree-plugin-sdk[testing]"]
 dev = [
+    # Tests boot a real PluginRegistry, which only the (unpublished) kernel provides.
+    "tamtree-kernel",
     "pytest>=8",
     # Only the flow tests read YAML, and only to check the shipped
     # `template/flows/*.yaml` against the manifests. Not a runtime dependency: nothing
@@ -53,7 +55,7 @@ openrouter_api = "tamtree_shortvideo:OPENROUTER_API_CREDENTIAL"
 # Sibling Tamtree checkout at ~/sites/tamtree. Swap for the git URL in README
 # when developing without that tree.
 tamtree-plugin-sdk = { path = "../../tamtree/packages/plugin-sdk", editable = true }
-tamtree-sdk = { path = "../../tamtree/packages/sdk", editable = true }
+tamtree-kernel = { path = "../../tamtree/packages/kernel", editable = true }
 
 [build-system]
 requires = ["hatchling"]

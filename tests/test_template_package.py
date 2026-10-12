@@ -23,9 +23,9 @@ from typing import Any
 
 import pytest
 import yaml
-from tamtree_sdk.flowdef import FlowDefinition
-from tamtree_sdk.resources import TemplateManifest
-from tamtree_sdk.semver import satisfies
+from tamtree_kernel.flowdef import FlowDefinition
+from tamtree_kernel.resources import TemplateManifest
+from tamtree_kernel.semver import satisfies
 
 from tamtree_shortvideo import NODES
 
@@ -119,7 +119,7 @@ def test_the_catalog_says_self_hosted_only_and_what_a_run_can_spend() -> None:
 
 def test_the_server_loads_scans_and_accepts_the_package() -> None:
     template_io = pytest.importorskip("tamtree_server.template_io")
-    from tamtree_sdk import PluginRegistry
+    from tamtree_kernel import PluginRegistry
 
     package = template_io.load_package_dir(PACKAGE)
     template_io.scan_package_for_secrets(package)
