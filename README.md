@@ -453,6 +453,13 @@ Three things in there are load-bearing rather than scaffolding:
 under `on_item_error: skip` a dropped beat shifts every later index, so nothing
 downstream may identify a beat by position.
 
+## Flows — the `Guide video` template
+
+[`guide-template/`](guide-template/) is a second template package. It turns a
+guide brief into a narrated, screen-recorded 16:9 user guide of your own
+Tamtree, using `shortvideo.guide_assemble` and the `browser-capture` plugin's
+capture node. Its README covers setup and the guide format.
+
 ## Develop
 
 ```sh

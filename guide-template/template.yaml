@@ -1,0 +1,59 @@
+apiVersion: tamtree.dev/v1
+kind: Template
+metadata:
+  name: guide-video
+  version: 0.1.0
+  description: >-
+    Turn a guide brief into a narrated 1920x1080 screen-recorded user guide of
+    your own Tamtree, with zoom, cursor, callouts, section titles and captions,
+    and approve it before it is final. SELF-HOSTED ONLY: it drives a real
+    browser against your local app, and renders with Chrome and ffmpeg in the
+    worker's sandbox. Needs the `shortvideo` and `browser-capture` plugins on
+    the worker, an OpenRouter API key with credits for the narration, a
+    Playwright session to record signed in, and a mask document naming the
+    values to blur. MOST ONE RUN CAN SPEND: 1 guide-writing call to your
+    workspace's default chat model (none when you pass a written guide), 1
+    OpenRouter text-to-speech call per narration line, then 1 local recording
+    and 2 local renders that cost CPU but no provider. Uploading is by hand:
+    the run returns the mp4, its SRT and a YouTube chapter list.
+  license: Apache-2.0
+  publisher: tamtree-community
+  homepage: https://github.com/tamtree-ai/shortvideo
+  repository: https://github.com/tamtree-ai/shortvideo
+  catalog:
+    title: Guide video
+    category: content
+    integrations: []
+    primitives: [pipeline]
+    tags: [video, guide, screen-recording, self-hosted-only, approval, openrouter]
+    summary: >-
+      A guide brief in, an approved 16:9 screen-recorded guide out: narration,
+      one masked recording per section paced to its narration, zoom and cursor
+      from the recording itself, a half-size draft for you to approve, then the
+      final render with SRT and chapters. Self-hosted only.
+    setup_minutes: 30
+spec:
+  requires:
+    credentials:
+      - type: openrouter_api
+        slot: openrouter
+      # The capture records the app signed in, and blurs what the mask names.
+      - type: browser_session
+        slot: session
+      - type: browser_capture_mask
+        slot: mask
+    plugins:
+      - name: tamtree-nodes
+        contracts:
+          plugin: "^0.1"
+      - name: tamtree-ai
+        contracts:
+          plugin: "^0.1"
+      - name: shortvideo
+        contracts:
+          plugin: "^0.1"
+      - name: browser-capture
+        contracts:
+          plugin: "^0.1"
+  resources:
+    - flows/guide-video.yaml

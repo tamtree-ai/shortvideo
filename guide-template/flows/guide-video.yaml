@@ -1,0 +1,369 @@
+# Guide video — a guide brief in, an approved 16:9 screen-recorded guide out.
+#
+#   brief -> guide (model, or passed in) -> phrases -> narration
+#         -> scene file paced by the narration -> masked capture, one clip per section
+#         -> guide timeline -> draft render -> approval -> final render -> save
+#
+# A GUIDE is sections; each has an `id` (a lowercase scene id), a `title`, the
+# narration `lines` spoken over it, the capture `steps` that record it (the
+# browser-capture scene vocabulary: goto, click, hover, fill, press, wait_for,
+# scroll, pause), and optional `callouts` labelling a step by its index. Pass a
+# written guide on the trigger to skip the model — the usual way to make a guide
+# whose steps are known to work.
+#
+# AUDIO DRIVES THE VIDEO. Every line is narrated first, in one run, each phrase
+# named `<section id>.<n>`; each section's recording is then told to last at
+# least as long as its section is spoken (`min_duration_ms`), so the footage is
+# cut to the voice and never the other way round.
+#
+# WHAT A REVIEWER APPROVES is the draft: the same timeline at half size. The
+# final render refuses any timeline whose digest differs from it.
+#
+# OPERATOR SETTINGS the capture needs on the worker: `TAMTREE_PLUGIN_BROWSER_CAPTURE_CLI`
+# (the CLI), and `TAMTREE_PLUGIN_BROWSER_CAPTURE_ALLOW` if the app is not on
+# loopback. A guide over about three minutes also needs `TAMTREE_REMOTION_TIMEOUT_S`
+# raised (see the shortvideo README).
+apiVersion: tamtree.dev/v1
+kind: Flow
+metadata:
+  name: guide-video
+  display_name: Guide video
+spec:
+  api_version: tamtree.dev/v1
+  flow_type: pipeline
+  nodes:
+    - id: brief
+      type: tamtree.manual_trigger
+      position: [40.0, 200.0]
+      params:
+        input_schema:
+          type: object
+          properties:
+            brief:
+              type: string
+              description: >-
+                What the guide teaches, the screens it walks through, and how to
+                reach each one — the model writes the sections from this.
+            guide:
+              description: >-
+                Optional. A written guide ({"title", "sections": [...]}) to
+                record as it is, without asking the model.
+            base_url:
+              type: string
+              description: >-
+                The app to record. Must be on the worker's capture allowlist;
+                loopback by default.
+              default: http://localhost:5173
+          required: [brief]
+
+    - id: has_guide
+      type: tamtree.if
+      position: [180.0, 200.0]
+      params:
+        condition: "{{ $json.get('guide') }}"
+
+    # Narration and steps, as JSON. The model cannot see the app, so the brief
+    # has to say where things are; a guide that needs exact steps is better
+    # written by hand and passed on the trigger.
+    - id: write
+      type: tamtree.llm_chat
+      position: [320.0, 280.0]
+      params:
+        system_prompt: >-
+          You write screen-recorded user guides for a web app. Reply with JSON
+          only, no commentary, in exactly this shape:
+          {"title": "...", "sections": [{"id": "...", "title": "...",
+          "lines": ["..."], "steps": [...], "callouts": [{"step": 0, "text": "..."}]}]}.
+          Write 2 to 6 sections. Each id is lowercase letters, digits and
+          hyphens. Each title is at most 60 characters. Each line is one spoken
+          sentence of at most 140 characters; 1 to 6 lines per section. Steps
+          use only these actions: {"action": "goto", "path": "/..."},
+          {"action": "click"|"hover", "target": T}, {"action": "fill", "target":
+          T, "text": "..."}, {"action": "press", "key": "Enter"},
+          {"action": "wait_for", "target": T}, {"action": "scroll", "target": T,
+          "by": 400}, {"action": "pause", "ms": 1000}; each may add "hold_ms".
+          A target T is one of {"node": "<step id>"}, {"text": "..."},
+          {"role": "button", "name": "..."}, {"label": "..."},
+          {"placeholder": "..."}, {"test_id": "..."}. The first section starts
+          with a goto. Callouts name a step by its index in that section's
+          steps, with at most 40 characters of text.
+        prompt: "{{ $json['brief'] }}"
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # The guide, whichever way it arrived, as the three things the rest of the
+    # flow reads: the named phrases to narrate, the sections the assembler
+    # times, and each section's capture steps.
+    - id: prepare
+      type: tamtree.code
+      position: [480.0, 200.0]
+      params:
+        language: python
+        timeout_s: 10
+        code: |
+          import json
+          import re
+
+          data = items[0]["json"]
+          guide = data.get("guide")
+          if guide is None:
+              match = re.search(r"\{.*\}", data.get("text") or "", re.S)
+              if match is None:
+                  raise ValueError("The model's reply holds no JSON guide.")
+              guide = json.loads(match.group(0))
+          if isinstance(guide, str):
+              guide = json.loads(guide)
+
+          sections = guide.get("sections") or []
+          if not sections:
+              raise ValueError("The guide has no sections.")
+          phrases, plan, steps = [], [], {}
+          for section in sections:
+              sid = section.get("id")
+              if not isinstance(sid, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", sid):
+                  raise ValueError(f"Section id {sid!r} must be lowercase letters, digits, - or _.")
+              lines = [str(line).strip() for line in section.get("lines") or [] if str(line).strip()]
+              if not lines:
+                  raise ValueError(f"Section {sid!r} has no narration lines.")
+              if not section.get("steps"):
+                  raise ValueError(f"Section {sid!r} has no capture steps.")
+              for number, line in enumerate(lines, start=1):
+                  phrases.append({"name": f"{sid}.{number}", "text": line})
+              plan.append(
+                  {
+                      "id": sid,
+                      "title": section.get("title") or sid,
+                      "callouts": section.get("callouts") or [],
+                  }
+              )
+              steps[sid] = section["steps"]
+
+          items = [
+              {
+                  "json": {
+                      "title": guide.get("title") or "",
+                      "phrases": phrases,
+                      "sections": plan,
+                      "steps": steps,
+                  }
+              }
+          ]
+
+    - id: target
+      type: tamtree.set
+      position: [620.0, 200.0]
+      params:
+        fields:
+          base_url: "{{ $node('brief').items[0].json.get('base_url') or 'http://localhost:5173' }}"
+
+    # Every line in one run, phrase by phrase, so each `<section>.<n>` mark is
+    # measured from the audio itself. The output layers over the item, so
+    # `sections`, `steps` and `base_url` ride along to the next two steps.
+    - id: narrate
+      type: shortvideo.openrouter_tts
+      position: [760.0, 200.0]
+      params:
+        input_mode: captions
+        captions: "{{ $json['phrases'] }}"
+        voice: Zephyr
+        phrase_gap_seconds: 0.25
+        output_binary_property: audio
+      credentials:
+        openrouter_api: openrouter
+      settings:
+        timeout_s: 600
+        retry_on_fail: true
+        max_retries: 2
+
+    # The scene file, paced by the narration: each section's recording lasts at
+    # least as long as the section is spoken (section 0 from the start of the
+    # audio, as its beat is), plus half a second of slack.
+    - id: scene
+      type: tamtree.code
+      position: [900.0, 120.0]
+      params:
+        language: python
+        timeout_s: 10
+        code: |
+          import math
+
+          data = items[0]["json"]
+          order = [section["id"] for section in data["sections"]]
+          starts = {}
+          for caption in data["captions"]:
+              starts.setdefault(caption["name"].rsplit(".", 1)[0], caption["start_seconds"])
+          scenes = []
+          for index, sid in enumerate(order):
+              begin = 0.0 if index == 0 else starts[sid]
+              end = starts[order[index + 1]] if index + 1 < len(order) else data["duration_seconds"]
+              scenes.append(
+                  {
+                      "id": sid,
+                      "min_duration_ms": math.ceil((end - begin) * 1000) + 500,
+                      "steps": data["steps"][sid],
+                  }
+              )
+          items = [{"json": {"scene": {"version": 1, "base_url": data["base_url"], "scenes": scenes}}}]
+
+    # The real app, recorded at 2x through the operator's allowlist, every
+    # value the mask names blurred before a frame is kept, and a leak check that
+    # fails the run (and deletes the clips) if one ever showed.
+    - id: capture
+      type: browser_capture.capture
+      position: [1040.0, 120.0]
+      params:
+        scene: ""
+        attachment: video
+        timeout_s: 1800
+      credentials:
+        browser_session: session
+        browser_capture_mask: mask
+      settings:
+        timeout_s: 1900
+
+    # Recordings on `main`, the narration on its own port.
+    - id: assemble
+      type: shortvideo.guide_assemble
+      position: [1200.0, 200.0]
+      params:
+        captions: true
+        title_seconds: 2.5
+        crossfade_frames: 0
+
+    - id: draft
+      type: shortvideo.compose
+      position: [1360.0, 200.0]
+      params:
+        draft: true
+        attachment: video
+      settings:
+        timeout_s: 1800
+
+    - id: review
+      type: tamtree.approval
+      position: [1520.0, 200.0]
+      params:
+        title: Approve this guide?
+        message: >-
+          {{ $json['beats'] }} sections, {{ $json['duration_seconds'] }}s. This is the
+          half-size draft; approving renders the same timeline at full size.
+          Check the pacing, the zoom and that nothing private shows.
+        subject: "timeline {{ $json['digest'] }}"
+        preview: video
+        timeout_s: 604800
+        on_timeout: reject
+
+    - id: final
+      type: shortvideo.compose
+      position: [1680.0, 120.0]
+      params:
+        draft: false
+        attachment: video
+        expected_digest: "{{ $node('draft').items[0].json['digest'] }}"
+      settings:
+        timeout_s: 3600
+
+    - id: save_guide
+      type: tamtree.save_asset
+      position: [1840.0, 120.0]
+      params:
+        name: "guide-{{ $json['digest'] }}"
+        kind: video
+        binary_property: video
+        metadata:
+          tags: [shortvideo, guide, final]
+          fields:
+            srt: "{{ $node('assemble').items[0].json['srt'] }}"
+            chapters: "{{ $node('assemble').items[0].json['chapters'] }}"
+      settings:
+        timeout_s: 120
+        retry_on_fail: true
+        max_retries: 2
+
+    # What to paste into the upload form, on the run's last step.
+    - id: done
+      type: tamtree.set
+      position: [2000.0, 120.0]
+      params:
+        keep_only_set: true
+        fields:
+          status: approved
+          digest: "{{ $node('final').items[0].json['digest'] }}"
+          chapters: "{{ $node('assemble').items[0].json['chapters'] }}"
+          srt: "{{ $node('assemble').items[0].json['srt'] }}"
+
+    - id: rejected
+      type: tamtree.set
+      position: [1680.0, 300.0]
+      params:
+        fields:
+          status: rejected
+          digest: "{{ $json['digest'] }}"
+          review_note: "{{ $json['_approval']['message'] }}"
+          decided_by: "{{ $json['_approval']['decided_by'] }}"
+
+  connections:
+    - from_node: brief
+      to_node: has_guide
+    - from_node: has_guide
+      from_port: "true"
+      to_node: prepare
+    - from_node: has_guide
+      from_port: "false"
+      to_node: write
+    - from_node: write
+      to_node: prepare
+    - from_node: prepare
+      to_node: target
+    - from_node: target
+      to_node: narrate
+    - from_node: narrate
+      to_node: scene
+    - from_node: scene
+      to_node: capture
+    - from_node: capture
+      to_node: assemble
+    - from_node: narrate
+      to_node: assemble
+      to_port: narration
+    - from_node: assemble
+      to_node: draft
+    - from_node: draft
+      to_node: review
+    - from_node: review
+      from_port: approved
+      to_node: final
+    - from_node: final
+      to_node: save_guide
+    - from_node: save_guide
+      to_node: done
+    - from_node: review
+      from_port: rejected
+      to_node: rejected
+
+  nodes_in_order:
+    - brief
+    - has_guide
+    - write
+    - prepare
+    - target
+    - narrate
+    - scene
+    - capture
+    - assemble
+    - draft
+    - review
+    - final
+    - save_guide
+    - done
+    - rejected
+
+  pinned_data:
+    brief:
+      - json:
+          brief: >-
+            Show how to add an HTTP Request step to the Daily Tech News Digest
+            workflow and inspect what it returned.
+          base_url: http://localhost:5173
