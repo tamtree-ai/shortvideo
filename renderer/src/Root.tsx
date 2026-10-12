@@ -1,10 +1,11 @@
 import React from 'react';
 import {Composition} from 'remotion';
 
+import {Guide} from './Guide';
 import {Short} from './Short';
 import type {RenderDocument} from './timeline';
 
-// Two compositions, one component. The ids are the template names the timeline
+// Two short compositions, one component, and the guide's. The ids are the template names the timeline
 // carries, so `selectComposition({id: document.template})` needs no mapping
 // table — and an unknown template fails in Remotion's own "no composition with
 // that id" rather than silently rendering the other one.
@@ -62,6 +63,16 @@ export const RemotionRoot: React.FC = () => (
       fps={30}
       width={1080}
       height={1920}
+    />
+    <Composition
+      id="guide-16x9"
+      component={Guide}
+      calculateMetadata={calculateMetadata}
+      defaultProps={{document: placeholder}}
+      durationInFrames={1}
+      fps={30}
+      width={1920}
+      height={1080}
     />
   </>
 );

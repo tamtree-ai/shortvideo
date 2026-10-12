@@ -11,12 +11,17 @@ import type {Caption, SafeArea} from './timeline';
 // Below 84% is where every short-form surface puts its own chrome — handle,
 // description, progress bar, CTA — and above 66% is the frame's subject.
 
+// `guide` is the 16:9 screen-recording look: a smaller line on a dark plate,
+// because white text over a light app UI has nothing to stand out against and
+// a shadow alone does not fix that. Sized off the frame height, the shorter
+// side, for the same draft-scale reason as the short's.
 export const Captions: React.FC<{
   captions: Caption[];
   safeArea: SafeArea;
   width: number;
   height: number;
-}> = ({captions, safeArea, width, height}) => {
+  variant?: 'short' | 'guide';
+}> = ({captions, safeArea, width, height, variant = 'short'}) => {
   const frame = useCurrentFrame();
   // Captions within a beat are strictly ordered and non-overlapping, so at
   // most one is live. `find` rather than `filter` states that.
@@ -37,34 +42,54 @@ export const Captions: React.FC<{
           top,
           height: bandHeight,
           display: 'flex',
-          alignItems: 'center',
+          alignItems: variant === 'guide' ? 'flex-end' : 'center',
           justifyContent: 'center',
         }}
       >
-        <span
-          style={{
-            // Sized off the frame rather than in fixed pixels, so the draft
-            // render at 540×960 is the same composition at half scale rather
-            // than a different-looking one.
-            fontSize: Math.round(width * 0.062),
-            lineHeight: 1.25,
-            // The stack's first entry is what V3.4 bakes into the image with
-            // redistribution rights; the rest are what a dev machine has.
-            fontFamily: '"Tamtree Caption", "Inter", "Helvetica Neue", Arial, sans-serif',
-            fontWeight: 700,
-            color: 'white',
-            textAlign: 'center',
-            textWrap: 'balance',
-            // Legibility over arbitrary footage, without a plate that would
-            // cover the frame: a tight shadow reads on light and dark alike.
-            textShadow: '0 2px 12px rgba(0,0,0,0.55), 0 0 2px rgba(0,0,0,0.9)',
-            // Whitespace is preserved because the timeline permits a single
-            // newline and means it as a line break.
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {current.text}
-        </span>
+        {variant === 'guide' ? (
+          <span
+            style={{
+              fontSize: Math.round(height * 0.04),
+              lineHeight: 1.3,
+              fontFamily: '"Tamtree Caption", "Inter", "Helvetica Neue", Arial, sans-serif',
+              fontWeight: 600,
+              color: 'white',
+              textAlign: 'center',
+              textWrap: 'balance',
+              backgroundColor: 'rgba(12, 14, 20, 0.78)',
+              borderRadius: Math.round(height * 0.012),
+              padding: `${Math.round(height * 0.01)}px ${Math.round(height * 0.022)}px`,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {current.text}
+          </span>
+        ) : (
+          <span
+            style={{
+              // Sized off the frame rather than in fixed pixels, so the draft
+              // render at 540×960 is the same composition at half scale rather
+              // than a different-looking one.
+              fontSize: Math.round(width * 0.062),
+              lineHeight: 1.25,
+              // The stack's first entry is what V3.4 bakes into the image with
+              // redistribution rights; the rest are what a dev machine has.
+              fontFamily: '"Tamtree Caption", "Inter", "Helvetica Neue", Arial, sans-serif',
+              fontWeight: 700,
+              color: 'white',
+              textAlign: 'center',
+              textWrap: 'balance',
+              // Legibility over arbitrary footage, without a plate that would
+              // cover the frame: a tight shadow reads on light and dark alike.
+              textShadow: '0 2px 12px rgba(0,0,0,0.55), 0 0 2px rgba(0,0,0,0.9)',
+              // Whitespace is preserved because the timeline permits a single
+              // newline and means it as a line break.
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {current.text}
+          </span>
+        )}
       </div>
     </AbsoluteFill>
   );

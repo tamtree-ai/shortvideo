@@ -155,7 +155,7 @@ def materialized_name(index: int, ref: BinaryRef) -> str:
 
 
 class ComposeNode(ProgrammaticNode):
-    """Render an approved timeline to a vertical mp4."""
+    """Render an approved timeline to an mp4 — a vertical short or a 16:9 guide."""
 
     name: ClassVar[str] = NODE_NAME
     manifest: ClassVar[NodeManifest] = NodeManifest.model_validate(
@@ -163,9 +163,10 @@ class ComposeNode(ProgrammaticNode):
             "name": NODE_NAME,
             "display_name": "Short video — compose",
             "description": (
-                "Render a TimelineV1 document to a 1080×1920 mp4 — narration, per-beat "
-                "footage, captions and transitions. Self-hosted only: the renderer runs "
-                "in the local sandbox, which hosted multi-tenant does not support."
+                "Render a TimelineV1 document to an mp4 — a 1080×1920 short or a 1920×1080 "
+                "guide — with narration, per-beat footage, captions and transitions. "
+                "Self-hosted only: the renderer runs in the local sandbox, which hosted "
+                "multi-tenant does not support."
             ),
             "category": "Files & media",
             "icon": "icons/shortvideo.svg",
@@ -218,10 +219,10 @@ class ComposeNode(ProgrammaticNode):
                     "type": "boolean",
                     "default": False,
                     "description": (
-                        "Render at half size (540×960) for the approval preview. The same "
-                        "composition and the same frame boundaries — scale is the only "
-                        "difference, so approving the draft and rendering the final are "
-                        "the same decision."
+                        "Render at half size (540×960, or 960×540 for a guide) for the "
+                        "approval preview. The same composition and the same frame "
+                        "boundaries — scale is the only difference, so approving the draft "
+                        "and rendering the final are the same decision."
                     ),
                 },
                 {

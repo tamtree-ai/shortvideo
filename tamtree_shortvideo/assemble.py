@@ -51,7 +51,7 @@ from tamtree_shortvideo.timeline import (
     MAX_PAD_SECONDS,
     MAX_TRANSITION_FRAMES,
     MAX_TRANSITION_SHARE,
-    TEMPLATES,
+    SHORT_TEMPLATES,
     Beat,
     Caption,
     Clip,
@@ -305,10 +305,10 @@ class AssembleNode(ProgrammaticNode):
         narration_item = _narration(ctx)
         narration = narration_item.json_ or {}
         template = str(ctx.param("template") or "short-captioned")
-        if template not in TEMPLATES:
+        if template not in SHORT_TEMPLATES:
             raise NodeConfigurationError(
                 f"Short video assemble: {template!r} is not a template; use "
-                f"{' or '.join(TEMPLATES)}."
+                f"{' or '.join(SHORT_TEMPLATES)}."
             )
         crossfade = _number(ctx.param("crossfade_frames"))
         crossfade_frames = _DEFAULT_CROSSFADE if crossfade is None else int(crossfade)

@@ -28,6 +28,15 @@ disagrees is a rejection rather than a correction. That is what makes "the same
 **Audio drives the timeline, not the video** (§3 of the plan). Beat boundaries
 come from the narration's `<mark>` timepoints; a clip is trimmed to its beat,
 and a beat is never stretched to its clip.
+
+**Each template brings its own limits** (`PROFILES`). The two short templates
+keep every v1 number exactly; `guide-16x9` (the guide-video-capture subproject,
+`03-guide-timeline.md`) is a 1920×1080 screen-recording template whose beats
+are whole guide sections, so it has longer ceilings and a beat may carry a
+`guide` overlay — camera keyframes, a cursor track, clicks, callouts and a
+title card, all derived from the capture log by `shortvideo.guide_assemble`.
+The extension is additive: a short's document has no `guide` key, so its JSON,
+its digest and its render document are byte-for-byte what they were.
 """
 
 from __future__ import annotations
@@ -47,8 +56,10 @@ __all__ = [
     "FRAME_HEIGHT",
     "FRAME_RATE",
     "FRAME_WIDTH",
+    "GUIDE_TEMPLATE",
     "CLIP_DUCK_DB",
     "MAX_BEATS",
+    "MAX_GUIDE_ZOOM",
     "MAX_BEAT_SECONDS",
     "MAX_CAPTIONS_PER_BEAT",
     "MAX_CAPTION_CHARACTERS",
@@ -64,20 +75,30 @@ __all__ = [
     "MUSIC_TARGET_LUFS",
     "NARRATION_TARGET_LUFS",
     "NARRATION_TRUE_PEAK_DBTP",
+    "PROFILES",
+    "SHORT_TEMPLATES",
     "SUPPORTED_AUDIO_TYPES",
     "SUPPORTED_VIDEO_TYPES",
     "TEMPLATES",
     "TIMELINE_VERSION",
     "Beat",
+    "CameraKey",
+    "Callout",
     "Caption",
+    "Click",
     "Clip",
+    "CursorPoint",
+    "GuideBeat",
     "Music",
     "Narration",
+    "TemplateProfile",
     "Timeline",
     "TimelineError",
+    "TitleCard",
     "Transition",
     "as_json",
     "beat_boundaries",
+    "profile",
     "canonical_json",
     "frames_at",
     "render_document",
@@ -88,13 +109,19 @@ __all__ = [
 
 TIMELINE_VERSION: Final = 1
 
-#: The two first-party templates, bundled at image-build time (D1/D2). The id
+#: The first-party short templates, bundled at image-build time (D1/D2). The id
 #: reaches the render child as a fixed argv token, never as text — which is why
 #: it is an enum here and not a string.
-TEMPLATES: Final = ("short-captioned", "short-plain")
+SHORT_TEMPLATES: Final = ("short-captioned", "short-plain")
 
-#: v1 renders one shape. The fields exist on the timeline so a 60fps or square
-#: variant needs no `TimelineV2`; the validator accepts only these values today.
+#: The widescreen screen-recording template (guide-video-capture D3).
+GUIDE_TEMPLATE: Final = "guide-16x9"
+
+#: Every template this build renders; `PROFILES` holds what each one allows.
+TEMPLATES: Final = (*SHORT_TEMPLATES, GUIDE_TEMPLATE)
+
+#: The short templates' shape. The fields exist on the timeline so a 60fps or
+#: square variant needs no `TimelineV2`; each template accepts exactly one.
 FRAME_WIDTH: Final = 1080
 FRAME_HEIGHT: Final = 1920
 FRAME_RATE: Final = 30
@@ -143,6 +170,95 @@ CAPTION_SAFE_AREA: Final = {
     "top": 0.66,
     "bottom": 0.84,
 }
+
+#: The guide's caption band: a lower third that stays clear of the app's own
+#: bottom edge, where the panels a guide points at usually are not.
+GUIDE_CAPTION_SAFE_AREA: Final = {
+    "inset_x": 0.14,
+    "top": 0.80,
+    "bottom": 0.95,
+}
+
+#: The tightest a guide camera may frame. The capture records at 2x, so at 2x
+#: zoom one source pixel is still one output pixel; past that the footage would
+#: be upscaled, and a soft guide reads as a broken one.
+MAX_GUIDE_ZOOM: Final = 2.0
+
+#: Per-beat bounds on the guide overlay. A 5-minute section's cursor track,
+#: kept to at most one point per frame, is 9,000 points; the rest are far above
+#: anything a guide would carry and exist so a runaway document is a refusal
+#: rather than a slow render.
+_MAX_CAMERA_KEYS: Final = 2000
+_MAX_CURSOR_POINTS: Final = 9000
+_MAX_CLICKS: Final = 500
+_MAX_CALLOUTS: Final = 50
+_MAX_LABEL_CHARACTERS: Final = 80
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateProfile:
+    """What one template renders, and the limits its timeline is held to."""
+
+    width: int
+    height: int
+    #: `required`: every beat carries at least one; `forbidden`: none may;
+    #: `optional`: a beat may carry none.
+    captions: Literal["required", "forbidden", "optional"]
+    max_beat_seconds: float
+    max_total_seconds: float
+    max_captions_per_beat: int
+    max_caption_characters: int
+    max_pad_seconds: float
+    caption_safe_area: Mapping[str, float]
+    #: Whether a beat may carry a `guide` overlay.
+    guide: bool = False
+
+
+_SHORT_PROFILE: Final = {
+    "width": FRAME_WIDTH,
+    "height": FRAME_HEIGHT,
+    "max_beat_seconds": MAX_BEAT_SECONDS,
+    "max_total_seconds": MAX_TOTAL_SECONDS,
+    "max_captions_per_beat": MAX_CAPTIONS_PER_BEAT,
+    "max_caption_characters": MAX_CAPTION_CHARACTERS,
+    "max_pad_seconds": MAX_PAD_SECONDS,
+    "caption_safe_area": CAPTION_SAFE_AREA,
+}
+
+PROFILES: Final[Mapping[str, TemplateProfile]] = {
+    "short-captioned": TemplateProfile(captions="required", **_SHORT_PROFILE),  # type: ignore[arg-type]
+    "short-plain": TemplateProfile(captions="forbidden", **_SHORT_PROFILE),  # type: ignore[arg-type]
+    # A beat is a whole guide section, so the MiniMax ceiling does not apply:
+    # five minutes is a long section, and ten is what one compose can render
+    # inside a raised `TAMTREE_REMOTION_TIMEOUT_S` (the 900 CPU-second default
+    # covers about three). A screen recording that holds its last frame for a
+    # few seconds is a paused screen, not a defect, hence the longer pad.
+    # Captions are optional because a guide may lean on the destination's own
+    # subtitle track instead of burning them in.
+    GUIDE_TEMPLATE: TemplateProfile(
+        width=1920,
+        height=1080,
+        captions="optional",
+        max_beat_seconds=300.0,
+        max_total_seconds=600.0,
+        max_captions_per_beat=60,
+        max_caption_characters=140,
+        max_pad_seconds=5.0,
+        caption_safe_area=GUIDE_CAPTION_SAFE_AREA,
+        guide=True,
+    ),
+}
+
+
+def profile(template: str) -> TemplateProfile:
+    """The profile for a known template; `TimelineError` for anything else."""
+    found = PROFILES.get(template)
+    if found is None:
+        raise TimelineError(
+            f"unknown template {template!r} — this build renders {', '.join(TEMPLATES)}"
+        )
+    return found
+
 
 _CLIP_AUDIO_POLICIES: Final = ("mute", "duck", "keep")
 _TRANSITION_KINDS: Final = ("none", "crossfade")
@@ -197,6 +313,70 @@ class Clip:
 
 
 @dataclass(frozen=True, slots=True)
+class CameraKey:
+    """Where the guide camera looks at one frame. `x`/`y` are the centre of
+    the view as fractions of the recording; `zoom` 1 is the whole recording.
+    Between two keys the renderer eases, so a hold is two equal keys."""
+
+    frame: int
+    x: float
+    y: float
+    zoom: float
+
+
+@dataclass(frozen=True, slots=True)
+class CursorPoint:
+    """The recorded pointer at one frame, as fractions of the recording."""
+
+    frame: int
+    x: float
+    y: float
+
+
+@dataclass(frozen=True, slots=True)
+class Click:
+    """A press of the recorded pointer, drawn as a ripple."""
+
+    frame: int
+    x: float
+    y: float
+
+
+@dataclass(frozen=True, slots=True)
+class Callout:
+    """A labelled highlight around a box of the recording, for a span of
+    frames. The box is fractions of the recording, like everything else."""
+
+    text: str
+    start_frame: int
+    end_frame: int
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@dataclass(frozen=True, slots=True)
+class TitleCard:
+    """A section title over the first `frames` of its beat."""
+
+    text: str
+    frames: int
+
+
+@dataclass(frozen=True, slots=True)
+class GuideBeat:
+    """`guide-16x9`'s overlay for one beat. Every frame is absolute — on the
+    timeline's clock, like a caption's — and inside its own beat."""
+
+    title: TitleCard | None = None
+    camera: tuple[CameraKey, ...] = ()
+    cursor: tuple[CursorPoint, ...] = ()
+    clicks: tuple[Click, ...] = ()
+    callouts: tuple[Callout, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Beat:
     """One narration phrase, its footage, and its captions.
 
@@ -214,6 +394,7 @@ class Beat:
     transition: Transition = Transition()
     captions: tuple[Caption, ...] = ()
     pad_frames: int = 0
+    guide: GuideBeat | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +421,7 @@ class Music:
 class Timeline:
     """The authoring form. `validate` is what makes an instance trustworthy."""
 
-    template: Literal["short-captioned", "short-plain"]
+    template: Literal["short-captioned", "short-plain", "guide-16x9"]
     narration: Narration
     beats: tuple[Beat, ...]
     clip_audio: Literal["mute", "duck", "keep"] = "mute"
@@ -346,13 +527,11 @@ def _validate_frame(timeline: Timeline) -> None:
         raise TimelineError(
             f"this build renders TimelineV{TIMELINE_VERSION}, not version {timeline.version!r}"
         )
-    if timeline.template not in TEMPLATES:
+    shape = profile(timeline.template)
+    if (timeline.width, timeline.height) != (shape.width, shape.height):
         raise TimelineError(
-            f"unknown template {timeline.template!r} — v1 ships {' and '.join(TEMPLATES)}"
-        )
-    if (timeline.width, timeline.height) != (FRAME_WIDTH, FRAME_HEIGHT):
-        raise TimelineError(
-            f"v1 renders {FRAME_WIDTH}x{FRAME_HEIGHT} only — got {timeline.width}x{timeline.height}"
+            f"{timeline.template} renders {shape.width}x{shape.height} only — "
+            f"got {timeline.width}x{timeline.height}"
         )
     if timeline.fps != FRAME_RATE:
         raise TimelineError(f"v1 renders at {FRAME_RATE}fps only — got {timeline.fps}")
@@ -381,6 +560,7 @@ def _validate_narration(timeline: Timeline) -> None:
 def _validate_beats(timeline: Timeline) -> None:
     beats = timeline.beats
     fps = timeline.fps
+    shape = profile(timeline.template)
     if not beats:
         raise TimelineError("a timeline with no beats renders nothing")
     if len(beats) > MAX_BEATS:
@@ -406,19 +586,25 @@ def _validate_beats(timeline: Timeline) -> None:
             raise TimelineError(
                 f"beat {position} is {seconds:.3f}s; the minimum is {MIN_BEAT_SECONDS}s"
             )
-        if seconds > MAX_BEAT_SECONDS + _EPSILON:
+        if seconds > shape.max_beat_seconds + _EPSILON:
+            if shape.guide:
+                raise TimelineError(
+                    f"beat {position} is {seconds:.3f}s; a guide section may run at most "
+                    f"{shape.max_beat_seconds:.0f}s — split it"
+                )
             raise TimelineError(
                 f"beat {position} is {seconds:.3f}s; MiniMax H3 cannot generate more than "
                 f"{MAX_BEAT_SECONDS}s, so this beat has no honest source"
             )
-        _validate_clip(beat, fps=fps)
+        _validate_clip(beat, fps=fps, max_pad_seconds=shape.max_pad_seconds)
         first_seen = seen_refs.setdefault(beat.clip.ref_id, position)
         if first_seen != position:
             raise TimelineError(
                 f"beats {first_seen} and {position} use the same clip — almost always an "
                 f"aggregation bug rather than an intention"
             )
-        _validate_captions(beat, template=timeline.template)
+        _validate_captions(beat, template=timeline.template, shape=shape)
+        _validate_guide(beat, template=timeline.template, shape=shape)
         expected_start += beat.frames
 
     _validate_transitions(beats, fps=fps)
@@ -431,7 +617,7 @@ def _validate_beats(timeline: Timeline) -> None:
         )
 
 
-def _validate_clip(beat: Beat, *, fps: int) -> None:
+def _validate_clip(beat: Beat, *, fps: int, max_pad_seconds: float = MAX_PAD_SECONDS) -> None:
     clip = beat.clip
     where = f"beat {beat.index}"
     if not clip.ref_id:
@@ -458,10 +644,10 @@ def _validate_clip(beat: Beat, *, fps: int) -> None:
         raise TimelineError(f"{where} carries a negative pad")
     if beat.pad_frames >= beat.frames:
         raise TimelineError(f"{where} is entirely pad ({beat.pad_frames} of {beat.frames} frames)")
-    if beat.pad_frames > MAX_PAD_SECONDS * fps + _EPSILON:
+    if beat.pad_frames > max_pad_seconds * fps + _EPSILON:
         raise TimelineError(
             f"{where} would hold its last frame for {beat.pad_frames / fps:.3f}s; the ceiling is "
-            f"{MAX_PAD_SECONDS}s. The clip is too short for the narration it has to cover"
+            f"{max_pad_seconds}s. The clip is too short for the narration it has to cover"
         )
     window = (beat.frames - beat.pad_frames) / fps
     if abs((clip.out_seconds - clip.in_seconds) - window) > _EPSILON:
@@ -509,27 +695,31 @@ def _validate_transitions(beats: Sequence[Beat], *, fps: int) -> None:
             )
 
 
-def _validate_captions(beat: Beat, *, template: str) -> None:
+def _validate_captions(beat: Beat, *, template: str, shape: TemplateProfile) -> None:
     where = f"beat {beat.index}"
     captions = beat.captions
-    if template == "short-plain":
+    if shape.captions == "forbidden":
         if captions:
             raise TimelineError(
-                f"{where} carries captions, but 'short-plain' renders none — the timeline and the "
+                f"{where} carries captions, but {template!r} renders none — the timeline and the "
                 f"template disagree about what the viewer will see"
             )
         return
-    if not captions:
-        raise TimelineError(f"{where} has no caption, and 'short-captioned' requires one per beat")
-    if len(captions) > MAX_CAPTIONS_PER_BEAT:
+    if not captions and shape.captions == "required":
+        raise TimelineError(f"{where} has no caption, and {template!r} requires one per beat")
+    if len(captions) > shape.max_captions_per_beat:
         raise TimelineError(
-            f"{where} has {len(captions)} captions; the ceiling is {MAX_CAPTIONS_PER_BEAT}"
+            f"{where} has {len(captions)} captions; the ceiling is {shape.max_captions_per_beat}"
         )
 
     end_of_beat = beat.start_frame + beat.frames
     previous_end = beat.start_frame
     for position, caption in enumerate(captions):
-        _validate_caption_text(caption.text, where=f"{where}, caption {position}")
+        _validate_caption_text(
+            caption.text,
+            where=f"{where}, caption {position}",
+            limit=shape.max_caption_characters,
+        )
         if caption.end_frame <= caption.start_frame:
             raise TimelineError(
                 f"{where}, caption {position} ends at frame {caption.end_frame}, at or before its "
@@ -548,12 +738,12 @@ def _validate_captions(beat: Beat, *, template: str) -> None:
         previous_end = caption.end_frame
 
 
-def _validate_caption_text(text: str, *, where: str) -> None:
+def _validate_caption_text(text: str, *, where: str, limit: int = MAX_CAPTION_CHARACTERS) -> None:
     if not text.strip():
         raise TimelineError(f"{where} is empty")
-    if len(text) > MAX_CAPTION_CHARACTERS:
+    if len(text) > limit:
         raise TimelineError(
-            f"{where} is {len(text)} characters; the ceiling is {MAX_CAPTION_CHARACTERS}. "
+            f"{where} is {len(text)} characters; the ceiling is {limit}. "
             f"A caption slot is two comfortable lines, not a paragraph"
         )
     for character in text:
@@ -566,6 +756,111 @@ def _validate_caption_text(text: str, *, where: str) -> None:
             )
 
 
+def _validate_guide(beat: Beat, *, template: str, shape: TemplateProfile) -> None:
+    guide = beat.guide
+    if guide is None:
+        return
+    where = f"beat {beat.index}"
+    if not shape.guide:
+        raise TimelineError(
+            f"{where} carries a guide overlay, but {template!r} draws none — only "
+            f"{GUIDE_TEMPLATE} does"
+        )
+    first = beat.start_frame
+    last = beat.start_frame + beat.frames
+
+    def inside(frame: int, what: str) -> None:
+        if not first <= frame <= last:
+            raise TimelineError(
+                f"{where}'s {what} is at frame {frame}, outside its own beat ({first}–{last})"
+            )
+
+    def fraction(value: float, what: str) -> None:
+        if not math.isfinite(value) or not -_EPSILON <= value <= 1 + _EPSILON:
+            raise TimelineError(
+                f"{where}'s {what} is {value!r}; positions are fractions of the recording, 0 to 1"
+            )
+
+    if guide.title is not None:
+        _validate_label(guide.title.text, where=f"{where}'s title")
+        if not 1 <= guide.title.frames <= beat.frames:
+            raise TimelineError(
+                f"{where}'s title card is {guide.title.frames} frames; it must fit its beat "
+                f"({beat.frames})"
+            )
+
+    _bounded(guide.camera, _MAX_CAMERA_KEYS, f"{where}'s camera keys")
+    previous = -1
+    for key in guide.camera:
+        inside(key.frame, "camera key")
+        if key.frame <= previous:
+            raise TimelineError(f"{where}'s camera keys must increase strictly in frame")
+        previous = key.frame
+        if not math.isfinite(key.zoom) or not 1 - _EPSILON <= key.zoom <= MAX_GUIDE_ZOOM + _EPSILON:
+            raise TimelineError(
+                f"{where}'s camera zoom {key.zoom!r} is outside 1–{MAX_GUIDE_ZOOM}; past "
+                f"{MAX_GUIDE_ZOOM} the 2x recording would be upscaled"
+            )
+        half = 0.5 / key.zoom
+        for value, axis in ((key.x, "x"), (key.y, "y")):
+            if not math.isfinite(value) or not half - _EPSILON <= value <= 1 - half + _EPSILON:
+                raise TimelineError(
+                    f"{where}'s camera at frame {key.frame} looks past the edge of the recording "
+                    f"({axis} {value!r} at zoom {key.zoom})"
+                )
+
+    _bounded(guide.cursor, _MAX_CURSOR_POINTS, f"{where}'s cursor points")
+    previous = -1
+    for point in guide.cursor:
+        inside(point.frame, "cursor point")
+        if point.frame <= previous:
+            raise TimelineError(f"{where}'s cursor points must increase strictly in frame")
+        previous = point.frame
+        fraction(point.x, "cursor x")
+        fraction(point.y, "cursor y")
+
+    _bounded(guide.clicks, _MAX_CLICKS, f"{where}'s clicks")
+    for click in guide.clicks:
+        inside(click.frame, "click")
+        fraction(click.x, "click x")
+        fraction(click.y, "click y")
+
+    _bounded(guide.callouts, _MAX_CALLOUTS, f"{where}'s callouts")
+    for position, callout in enumerate(guide.callouts):
+        what = f"callout {position}"
+        _validate_label(callout.text, where=f"{where}, {what}")
+        inside(callout.start_frame, what)
+        inside(callout.end_frame, what)
+        if callout.end_frame <= callout.start_frame:
+            raise TimelineError(f"{where}, {what} ends at or before its start")
+        for value, axis in ((callout.x, "x"), (callout.y, "y")):
+            fraction(value, f"{what} {axis}")
+        if callout.w <= 0 or callout.h <= 0:
+            raise TimelineError(f"{where}, {what} has an empty box")
+        fraction(callout.x + callout.w, f"{what} right edge")
+        fraction(callout.y + callout.h, f"{what} bottom edge")
+
+
+def _bounded(entries: Sequence[Any], ceiling: int, what: str) -> None:
+    if len(entries) > ceiling:
+        raise TimelineError(f"{what} number {len(entries)}; the ceiling is {ceiling}")
+
+
+def _validate_label(text: str, *, where: str) -> None:
+    """A title or callout: one short line of plain text."""
+    if not text.strip():
+        raise TimelineError(f"{where} is empty")
+    if len(text) > _MAX_LABEL_CHARACTERS:
+        raise TimelineError(
+            f"{where} is {len(text)} characters; the ceiling is {_MAX_LABEL_CHARACTERS}"
+        )
+    for character in text:
+        if unicodedata.category(character) in {"Cc", "Cf", "Cs"}:
+            raise TimelineError(
+                f"{where} contains a control or surrogate character (U+{ord(character):04X})"
+            )
+
+
 def _validate_duration(timeline: Timeline) -> None:
     seconds = timeline.total_seconds
     if seconds < MIN_TOTAL_SECONDS - _EPSILON:
@@ -573,9 +868,10 @@ def _validate_duration(timeline: Timeline) -> None:
             f"the timeline is {seconds:.3f}s; below {MIN_TOTAL_SECONDS}s "
             f"there is nothing to approve"
         )
-    if seconds > MAX_TOTAL_SECONDS + _EPSILON:
+    ceiling = profile(timeline.template).max_total_seconds
+    if seconds > ceiling + _EPSILON:
         raise TimelineError(
-            f"the timeline is {seconds:.3f}s; the v1 ceiling is {MAX_TOTAL_SECONDS}s"
+            f"the timeline is {seconds:.3f}s; the v1 ceiling for {timeline.template} is {ceiling}s"
         )
 
 
@@ -624,7 +920,7 @@ def as_json(timeline: Timeline) -> dict[str, Any]:
 
 
 def _beat_json(beat: Beat) -> dict[str, Any]:
-    return {
+    document: dict[str, Any] = {
         "index": beat.index,
         "start_frame": beat.start_frame,
         "frames": beat.frames,
@@ -646,6 +942,34 @@ def _beat_json(beat: Beat) -> dict[str, Any]:
             for caption in beat.captions
         ],
     }
+    # Only when present, so a short's document — and its digest — is unchanged.
+    if beat.guide is not None:
+        document["guide"] = _guide_json(beat.guide)
+    return document
+
+
+def _guide_json(guide: GuideBeat) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "camera": [
+            {"frame": key.frame, "x": key.x, "y": key.y, "zoom": key.zoom} for key in guide.camera
+        ],
+        # Pairs and triples rather than objects: a cursor track is thousands of
+        # points, and the render document is read whole by the child.
+        "cursor": [[point.frame, point.x, point.y] for point in guide.cursor],
+        "clicks": [[click.frame, click.x, click.y] for click in guide.clicks],
+        "callouts": [
+            {
+                "text": callout.text,
+                "start_frame": callout.start_frame,
+                "end_frame": callout.end_frame,
+                "box": {"x": callout.x, "y": callout.y, "w": callout.w, "h": callout.h},
+            }
+            for callout in guide.callouts
+        ],
+    }
+    if guide.title is not None:
+        document["title"] = {"text": guide.title.text, "frames": guide.title.frames}
+    return document
 
 
 def timeline_from_json(document: Mapping[str, Any]) -> Timeline:
@@ -659,11 +983,13 @@ def timeline_from_json(document: Mapping[str, Any]) -> Timeline:
     try:
         narration = document["narration"]
         beats_raw = document["beats"]
+        template = str(document["template"])
+        shape = PROFILES.get(template)
         timeline = Timeline(
             version=int(document.get("version", TIMELINE_VERSION)),
-            template=str(document["template"]),  # type: ignore[arg-type]
-            width=int(document.get("width", FRAME_WIDTH)),
-            height=int(document.get("height", FRAME_HEIGHT)),
+            template=template,  # type: ignore[arg-type]
+            width=int(document.get("width", shape.width if shape else FRAME_WIDTH)),
+            height=int(document.get("height", shape.height if shape else FRAME_HEIGHT)),
             fps=int(document.get("fps", FRAME_RATE)),
             clip_audio=str(document.get("clip_audio", "mute")),  # type: ignore[arg-type]
             narration=Narration(
@@ -707,6 +1033,45 @@ def _beat_from_json(entry: Mapping[str, Any]) -> Beat:
                 end_frame=int(caption["end_frame"]),
             )
             for caption in entry.get("captions") or ()
+        ),
+        guide=_guide_from_json(entry.get("guide")),
+    )
+
+
+def _guide_from_json(entry: Any) -> GuideBeat | None:
+    if entry is None:
+        return None
+    title = entry.get("title")
+    return GuideBeat(
+        title=TitleCard(text=str(title["text"]), frames=int(title["frames"])) if title else None,
+        camera=tuple(
+            CameraKey(
+                frame=int(key["frame"]),
+                x=float(key["x"]),
+                y=float(key["y"]),
+                zoom=float(key["zoom"]),
+            )
+            for key in entry.get("camera") or ()
+        ),
+        cursor=tuple(
+            CursorPoint(frame=int(frame), x=float(x), y=float(y))
+            for frame, x, y in entry.get("cursor") or ()
+        ),
+        clicks=tuple(
+            Click(frame=int(frame), x=float(x), y=float(y))
+            for frame, x, y in entry.get("clicks") or ()
+        ),
+        callouts=tuple(
+            Callout(
+                text=str(callout["text"]),
+                start_frame=int(callout["start_frame"]),
+                end_frame=int(callout["end_frame"]),
+                x=float(callout["box"]["x"]),
+                y=float(callout["box"]["y"]),
+                w=float(callout["box"]["w"]),
+                h=float(callout["box"]["h"]),
+            )
+            for callout in entry.get("callouts") or ()
         ),
     )
 
@@ -789,7 +1154,10 @@ def render_document(timeline: Timeline, paths: Mapping[str, str]) -> dict[str, A
             "duck_release_ms": MUSIC_DUCK_RELEASE_MS,
         }
     document["clip_duck_db"] = CLIP_DUCK_DB
-    document["caption_safe_area"] = dict(CAPTION_SAFE_AREA)
+    shape = PROFILES.get(timeline.template)
+    document["caption_safe_area"] = dict(
+        shape.caption_safe_area if shape is not None else CAPTION_SAFE_AREA
+    )
     for beat, source in zip(document["beats"], timeline.beats, strict=True):
         clip = {key: value for key, value in beat["clip"].items() if key != "ref"}
         clip["file"] = paths[source.clip.ref_id]

@@ -12,7 +12,7 @@
 // rules are few, and each error names the field so a failure reads as a
 // defect report rather than a stack trace.
 
-const TEMPLATES = new Set(['short-captioned', 'short-plain']);
+const TEMPLATES = new Set(['short-captioned', 'short-plain', 'guide-16x9']);
 const TRANSITIONS = new Set(['none', 'crossfade']);
 const CLIP_AUDIO = new Set(['mute', 'duck', 'keep']);
 
@@ -49,6 +49,65 @@ const mediaPath = (value, where) => {
     fail(`${where} must be a relative path inside the workdir, got ${JSON.stringify(path)}`);
   }
   return path;
+};
+
+const fraction = (value, where) => {
+  const n = number(value, where);
+  if (n < -1e-6 || n > 1 + 1e-6) fail(`${where} must be a fraction of the recording (0 to 1), got ${n}`);
+  return n;
+};
+
+/** A `guide-16x9` beat's overlay. The node derived and validated it; this is
+ * the shape check that keeps a malformed one from drawing a cursor at NaN. */
+const parseGuide = (guide, {where, first, last}) => {
+  if (guide === null || typeof guide !== 'object' || Array.isArray(guide)) fail(`${where} must be an object`);
+  const inside = (frame, at) => {
+    integer(frame, at);
+    if (frame < first || frame > last) fail(`${at} is outside its own beat`);
+  };
+  const list = (value, at) => {
+    if (!Array.isArray(value)) fail(`${at} must be a list`);
+    return value;
+  };
+  let previous = -1;
+  list(guide.camera ?? [], `${where}.camera`).forEach((key, i) => {
+    const at = `${where}.camera[${i}]`;
+    inside(key.frame, `${at}.frame`);
+    if (key.frame <= previous) fail(`${at}.frame must increase strictly`);
+    previous = key.frame;
+    fraction(key.x, `${at}.x`);
+    fraction(key.y, `${at}.y`);
+    if (number(key.zoom, `${at}.zoom`) < 1 - 1e-6) fail(`${at}.zoom must be at least 1`);
+  });
+  for (const name of ['cursor', 'clicks']) {
+    previous = -1;
+    list(guide[name] ?? [], `${where}.${name}`).forEach((point, i) => {
+      const at = `${where}.${name}[${i}]`;
+      if (!Array.isArray(point) || point.length !== 3) fail(`${at} must be [frame, x, y]`);
+      inside(point[0], `${at}[0]`);
+      if (name === 'cursor' && point[0] <= previous) fail(`${at} frames must increase strictly`);
+      previous = point[0];
+      fraction(point[1], `${at}[1]`);
+      fraction(point[2], `${at}[2]`);
+    });
+  }
+  list(guide.callouts ?? [], `${where}.callouts`).forEach((callout, i) => {
+    const at = `${where}.callouts[${i}]`;
+    string(callout.text, `${at}.text`);
+    inside(callout.start_frame, `${at}.start_frame`);
+    inside(callout.end_frame, `${at}.end_frame`);
+    if (callout.end_frame <= callout.start_frame) fail(`${at} ends before it starts`);
+    const box = callout.box ?? {};
+    fraction(box.x, `${at}.box.x`);
+    fraction(box.y, `${at}.box.y`);
+    fraction(box.x + number(box.w, `${at}.box.w`), `${at}.box right edge`);
+    fraction(box.y + number(box.h, `${at}.box.h`), `${at}.box bottom edge`);
+  });
+  if (guide.title !== undefined && guide.title !== null) {
+    string(guide.title.text, `${where}.title.text`);
+    const titleFrames = integer(guide.title.frames, `${where}.title.frames`);
+    if (titleFrames < 1 || titleFrames > last - first) fail(`${where}.title must fit its beat`);
+  }
 };
 
 /**
@@ -154,6 +213,10 @@ export const parseRenderDocument = (raw) => {
     }
     if (raw.template === 'short-plain' && captions.length > 0) {
       fail(`${where} carries captions, and short-plain forbids them`);
+    }
+    if (beat.guide !== undefined && beat.guide !== null) {
+      if (raw.template !== 'guide-16x9') fail(`${where} carries a guide overlay, and only guide-16x9 draws one`);
+      parseGuide(beat.guide, {where: `${where}.guide`, first: beat.start_frame, last: beat.start_frame + frames});
     }
     captions.forEach((caption, captionIndex) => {
       const at = `${where}.captions[${captionIndex}]`;

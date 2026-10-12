@@ -157,6 +157,49 @@ describe('parseRenderDocument', () => {
     assert.doesNotThrow(() => parseRenderDocument(plain));
   });
 
+  const guideDocument = (guide) => {
+    const doc = document({template: 'guide-16x9', width: 1920, height: 1080});
+    doc.beats[1].guide = guide;
+    return doc;
+  };
+  const overlay = (changes = {}) => ({
+    title: {text: 'Open a step', frames: 30},
+    camera: [{frame: 60, x: 0.5, y: 0.5, zoom: 1}, {frame: 80, x: 0.7, y: 0.4, zoom: 1.8}],
+    cursor: [[60, 0.5, 0.5], [90, 0.6, 0.4]],
+    clicks: [[90, 0.6, 0.4]],
+    callouts: [{text: 'Here', start_frame: 90, end_frame: 119, box: {x: 0.55, y: 0.35, w: 0.1, h: 0.1}}],
+    ...changes,
+  });
+
+  test('accepts a guide overlay, and a guide beat without captions', () => {
+    const doc = guideDocument(overlay());
+    doc.beats[0].captions = [];
+    assert.doesNotThrow(() => parseRenderDocument(doc));
+  });
+
+  test('draws a guide overlay only on the guide template', () => {
+    const short = document();
+    short.beats[1].guide = overlay();
+    assert.throws(() => parseRenderDocument(short), /only guide-16x9 draws one/);
+  });
+
+  test('keeps every overlay frame inside its own beat', () => {
+    assert.throws(() => parseRenderDocument(guideDocument(overlay({cursor: [[30, 0.5, 0.5]]}))), /outside its own beat/);
+    assert.throws(
+      () => parseRenderDocument(guideDocument(overlay({camera: [{frame: 70, x: 0.5, y: 0.5, zoom: 1}, {frame: 70, x: 0.5, y: 0.5, zoom: 1}]}))),
+      /increase strictly/,
+    );
+  });
+
+  test('refuses an overlay position that is not a fraction of the recording', () => {
+    assert.throws(() => parseRenderDocument(guideDocument(overlay({clicks: [[90, 1.4, 0.4]]}))), /fraction of the recording/);
+    const box = {x: 0.95, y: 0.35, w: 0.1, h: 0.1};
+    assert.throws(
+      () => parseRenderDocument(guideDocument(overlay({callouts: [{text: 'x', start_frame: 90, end_frame: 100, box}]}))),
+      /right edge/,
+    );
+  });
+
   test('refuses a caption that runs outside its own beat', () => {
     const spilling = document();
     spilling.beats[0].captions[0].end_frame = 90;

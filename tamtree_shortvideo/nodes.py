@@ -19,6 +19,7 @@ from tamtree_plugin_sdk import Node
 from tamtree_shortvideo.assemble import AssembleNode
 from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.google_tts import GoogleTtsNode
+from tamtree_shortvideo.guide_assemble import GuideAssembleNode
 from tamtree_shortvideo.minimax_cancel import MinimaxCancelNode
 from tamtree_shortvideo.minimax_collect import MinimaxCollectNode
 from tamtree_shortvideo.minimax_submit import MinimaxSubmitNode
@@ -46,5 +47,6 @@ NODES: Final[list[Node]] = [
     OpenRouterVideoSubmitNode(),
     OpenRouterVideoCollectNode(),
     AssembleNode(),
+    GuideAssembleNode(),
     ComposeNode(),
 ]

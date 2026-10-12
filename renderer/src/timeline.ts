@@ -7,7 +7,7 @@
 // characters" is a second thing to keep in step, and the one that drifts is
 // always the copy furthest from the test.
 
-export type Template = 'short-captioned' | 'short-plain';
+export type Template = 'short-captioned' | 'short-plain' | 'guide-16x9';
 export type ClipAudio = 'mute' | 'duck' | 'keep';
 
 export type Caption = {
@@ -29,6 +29,25 @@ export type Transition = {
   frames: number;
 };
 
+/** `guide-16x9` only. Every frame is absolute, on the timeline's clock; every
+ * position is a fraction of the recording, so the overlay is resolution-free. */
+export type CameraKey = {frame: number; x: number; y: number; zoom: number};
+/** `[frame, x, y]` */
+export type TrackPoint = [number, number, number];
+export type Callout = {
+  text: string;
+  start_frame: number;
+  end_frame: number;
+  box: {x: number; y: number; w: number; h: number};
+};
+export type GuideOverlay = {
+  title?: {text: string; frames: number};
+  camera: CameraKey[];
+  cursor: TrackPoint[];
+  clicks: TrackPoint[];
+  callouts: Callout[];
+};
+
 export type Beat = {
   index: number;
   start_frame: number;
@@ -37,6 +56,7 @@ export type Beat = {
   clip: Clip;
   transition: Transition;
   captions: Caption[];
+  guide?: GuideOverlay;
 };
 
 export type Narration = {

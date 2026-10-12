@@ -29,7 +29,7 @@ import {gainFromDb, mediaUrl, type Beat, type RenderDocument} from './timeline';
 /** The clip for one beat: trimmed at the head, holding its last frame for the
  * pad, and continuing past its own beat for however long the next beat's
  * crossfade borrows from it. */
-const BeatClip: React.FC<{
+export const BeatClip: React.FC<{
   document: RenderDocument;
   beat: Beat;
   playFrames: number;
@@ -150,7 +150,7 @@ export const Short: React.FC<{document: RenderDocument}> = ({document}) => {
 
 /** Holds children at full opacity for `frames`, then dissolves them out across
  * the `borrowed` frames the next beat's crossfade spends. */
-const FadingOut: React.FC<{frames: number; borrowed: number; children: React.ReactNode}> = ({
+export const FadingOut: React.FC<{frames: number; borrowed: number; children: React.ReactNode}> = ({
   frames,
   borrowed,
   children,

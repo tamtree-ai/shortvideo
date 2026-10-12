@@ -299,10 +299,72 @@ charged for them.
 The download goes to OpenRouter's authenticated content endpoint on
 `openrouter.ai`, so the API key never leaves the host it was issued for.
 
+### Short video — assemble guide (`shortvideo.guide_assemble`)
+
+Builds a **`guide-16x9`** timeline: a 1920×1080 screen-recorded user guide. A
+guide is a list of sections, and each one is narrated and recorded:
+
+- **The narration** is one `shortvideo.openrouter_tts` run in captions mode over
+  every phrase of the guide, connected to the `narration` input. Each phrase is
+  named after its section, `<section id>.<n>`, so one track carries a timing
+  mark per phrase.
+- **The recordings** are `browser_capture.capture` (the `tamtree-browser-capture`
+  plugin) items on `main`, one scene per section, with each scene id the same as
+  its section id.
+
+The result has **one beat per section**, timed by the narration. Each beat
+plays its recording with an overlay derived from that scene's capture log:
+
+- a camera that eases onto each step's target, at up to 2× (the recording is
+  2×, so this is never an upscale), and back out after a pause;
+- the cursor, drawn along its recorded path;
+- a ripple on each click;
+- callouts labelling the steps an author picks;
+- a title card over the section's opening;
+- captions on a plate in the lower third.
+
+The node also returns the captions as **SRT** and a **YouTube chapter list**
+(`srt`, `chapters`).
+
+| Param | Default | |
+|---|---|---|
+| **Sections** | *(blank)* | `[{"id", "title", "callouts": [{"step", "text", "seconds"}]}]`, in order. A callout's `step` is the scene step it labels. Blank reads `sections` from the narration item. |
+| **Burn in captions** | on | Off leaves the video bare. The SRT is returned either way. |
+| **Section title** | 2.5 | Seconds each section's title card shows; 0 for none. |
+| **Crossfade** | 0 | Frames to dissolve between sections; dropped where a recording has no spare footage. |
+
+**A recording is paced to its narration, not the other way round.** Set each
+scene's `min_duration_ms` to at least its section's spoken length. A recording
+that runs long is cut at the beat. One that runs short holds its last frame, for
+up to 5 s; past that the refusal says what `min_duration_ms` to use.
+
+The step also refuses:
+
+- a phrase that names no section;
+- a section with no phrase or no recording;
+- sections spoken out of order.
+
+Each would put narration over the wrong screen.
+
+The guide's limits are its own:
+
+| Limit | Value |
+|---|---|
+| A section | at most 5 min |
+| The whole guide | at most 10 min |
+| Captions per section | 60 |
+| A caption | 140 characters; longer phrases are split at words |
+
+A guide over about 3 minutes needs `TAMTREE_REMOTION_TIMEOUT_S` raised from its
+900 CPU-second default (≈1.7 CPU-seconds per second of video, times three).
+Short documents are unaffected: their JSON, digest and render document are
+byte-for-byte what they were.
+
 ### Short video — compose (`shortvideo.compose`)
 
 Renders one **TimelineV1** document — narration, per-beat footage, captions and
-transitions — to a 1080×1920 mp4. **Self-hosted only:** it runs a local
+transitions — to an mp4: a 1080×1920 short, or a 1920×1080 guide (below).
+**Self-hosted only:** it runs a local
 renderer in the shared subprocess sandbox, which hosted multi-tenant does not
 support (SEC-D3), and the step is refused there before it reads an input.
 
@@ -314,7 +376,7 @@ a render.
 | Param | Default | |
 |---|---|---|
 | **Timeline** | *(blank)* | The document to render. Blank reads `{{ $json.timeline }}` from the incoming item, which is what the template wires. |
-| **Draft quality** | off | Renders at half size (540×960) for the approval preview. The *same* composition and the same frame boundaries — scale is the only difference, which is what makes approving the draft and rendering the final one decision. |
+| **Draft quality** | off | Renders at half size (540×960, or 960×540 for a guide) for the approval preview. The *same* composition and the same frame boundaries — scale is the only difference, which is what makes approving the draft and rendering the final one decision. |
 | **Output attachment name** | `video` | What the finished mp4 is returned under. |
 
 Every clip and the narration must reach this step as an **attachment**; the
