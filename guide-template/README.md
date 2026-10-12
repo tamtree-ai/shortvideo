@@ -16,6 +16,7 @@ brief → guide (model, or passed in) → narration → scene file paced by the 
 | `TAMTREE_PLUGIN_BROWSER_CAPTURE_CLI` | Yes | The capture CLI |
 | `TAMTREE_PLUGIN_BROWSER_CAPTURE_ALLOW` | Only if the app isn't on loopback | The capture allowlist |
 | `TAMTREE_REMOTION_TIMEOUT_S` | For guides over about 3 minutes | Raises the render time limit |
+| `TAMTREE_MAX_STEP_TIMEOUT_S` | Yes, at `3600` or more | The capture, draft and final steps allow up to 3600 seconds. The default ceiling of 900 refuses to save the flow. Set it on the API and the worker. |
 
 **Bind three credentials:**
 
