@@ -39,7 +39,10 @@ EXPECTED_NODES = {
     "shortvideo.reuse",
 }
 
-EXPECTED_CREDENTIAL_TYPES = {"google_service_account", "minimax_api", OPENROUTER_CREDENTIAL_TYPE}
+EXPECTED_CREDENTIAL_TYPES = {"minimax_api", OPENROUTER_CREDENTIAL_TYPE}
+#: What the nodes may require: the types above, plus core's
+#: `google_service_account`, which the TTS nodes use and no longer contribute.
+USED_CREDENTIAL_TYPES = EXPECTED_CREDENTIAL_TYPES | {CREDENTIAL_TYPE}
 
 PLUGIN_NAME = "shortvideo"
 
@@ -50,11 +53,6 @@ def _entry_points() -> list[EntryPoint]:
     one that refuses the boot."""
     return [
         EntryPoint(name=PLUGIN_NAME, value="tamtree_shortvideo:NODES", group=GROUP_NODES),
-        EntryPoint(
-            name=CREDENTIAL_TYPE,
-            value="tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
-            group=GROUP_CREDENTIAL_TYPES,
-        ),
         EntryPoint(
             name=MINIMAX_CREDENTIAL_TYPE,
             value="tamtree_shortvideo:MINIMAX_API_CREDENTIAL",
@@ -123,7 +121,7 @@ def test_every_node_declares_the_credentials_it_uses() -> None:
             continue
         assert node.manifest.credentials, node.manifest.name
         for requirement in node.manifest.credentials:
-            assert requirement.type in EXPECTED_CREDENTIAL_TYPES
+            assert requirement.type in USED_CREDENTIAL_TYPES
 
 
 def test_ships_a_square_icon() -> None:
@@ -158,13 +156,14 @@ def test_plugin_discovers_its_nodes() -> None:
     # V3.2 raised it again to ^1.36 for the curated-backend contract (1.35.0)
     # and `MediaLimits.limit_address_space` (1.36.0), neither of which exists
     # below it. The SDK split (2.0.0) moved the registry into `tamtree_kernel`,
-    # so it is ^2.0.
-    assert plugin.manifest.contracts.sdk == "^2.0"
+    # so it is ^2.0. Moving `google_service_account` into core (2.10.0) raised
+    # it to ^2.10: the TTS nodes need a core that has that type.
+    assert plugin.manifest.contracts.sdk == "^2.10"
     # And the floor has to be one the SDK in this tree actually clears —
     # pinning above what is installed would pass every test here and refuse
     # at boot, which is the one place the mismatch is expensive.
     major, minor = (int(part) for part in CONTRACTS_VERSION.split(".")[:2])
-    assert (major, minor) >= (1, 34)
+    assert (major, minor) >= (2, 10)
 
 
 def test_claims_no_permission_it_does_not_use() -> None:

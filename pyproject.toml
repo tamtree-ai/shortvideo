@@ -47,7 +47,6 @@ remotion = "tamtree_shortvideo:REMOTION_BACKEND"
 shortvideo-audio = "tamtree_shortvideo:AUDIO_BACKEND"
 
 [project.entry-points."tamtree.credential_types"]
-google_service_account = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
 minimax_api = "tamtree_shortvideo:MINIMAX_API_CREDENTIAL"
 openrouter_api = "tamtree_shortvideo:OPENROUTER_API_CREDENTIAL"
 

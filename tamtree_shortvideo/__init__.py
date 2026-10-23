@@ -3,7 +3,6 @@
 from tamtree_shortvideo.compose import ComposeNode
 from tamtree_shortvideo.credentials import (
     CREDENTIAL_TYPE,
-    GOOGLE_SERVICE_ACCOUNT_CREDENTIAL,
     MINIMAX_API_CREDENTIAL,
     MINIMAX_CREDENTIAL_TYPE,
     OPENROUTER_API_CREDENTIAL,
@@ -21,7 +20,6 @@ from tamtree_shortvideo.remotion import BACKEND as REMOTION_BACKEND
 __all__ = [
     "AUDIO_BACKEND",
     "CREDENTIAL_TYPE",
-    "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
     "MINIMAX_API_CREDENTIAL",
     "MINIMAX_CREDENTIAL_TYPE",
     "NODES",

@@ -1,4 +1,11 @@
-"""The `google_service_account` credential type — data, not code (D-G6).
+"""The credential types this plugin uses — data, not code (D-G6).
+
+**`google_service_account` now ships in Tamtree core** (sheet-records, contracts
+2.10.0), where the Google Sheets steps use it too: one saved key serves both.
+Core took this plugin's shape unchanged — one secret field, `service_account_json`
+— so every key already saved keeps working. The plugin no longer contributes the
+type (a clash with a built-in is a boot refusal); it only names it, below.
+The reasoning that follows is why the shape is what it is, kept because it still is.
 
 **Why a new type rather than reusing `google_api`.** The shipped `google_api`
 credential is an OAuth *authorization-code* credential: it carries a client id,
@@ -40,7 +47,6 @@ from tamtree_plugin_sdk import CredentialFieldSpec, CredentialTypeSpec
 
 __all__ = [
     "CREDENTIAL_TYPE",
-    "GOOGLE_SERVICE_ACCOUNT_CREDENTIAL",
     "KEY_FIELD",
     "MINIMAX_API_CREDENTIAL",
     "MINIMAX_CREDENTIAL_TYPE",
@@ -60,28 +66,6 @@ CREDENTIAL_TYPE: Final = "google_service_account"
 
 #: The single field, named once for the same reason.
 KEY_FIELD: Final = "service_account_json"
-
-
-GOOGLE_SERVICE_ACCOUNT_CREDENTIAL: Final = CredentialTypeSpec(
-    type=CREDENTIAL_TYPE,
-    display_name="Google service account",
-    description=(
-        "The whole JSON key file downloaded from a Google Cloud service "
-        "account. Used to mint access tokens for Google Cloud APIs such as "
-        "Text-to-Speech. Grant the account the narrowest role that works, in a "
-        "project used for nothing else — the OAuth scope cannot narrow it."
-    ),
-    auth_kind="api_key",
-    fields=[
-        CredentialFieldSpec(
-            name=KEY_FIELD,
-            label="Service account key (JSON)",
-            secret=True,
-            required=True,
-            placeholder='{"type": "service_account", "project_id": "…", …}',
-        )
-    ],
-)
 
 
 # -- MiniMax (V2.1) ----------------------------------------------------------

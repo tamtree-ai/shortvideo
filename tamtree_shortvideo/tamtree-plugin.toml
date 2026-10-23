@@ -64,16 +64,18 @@ egress_allowlist = [
 # child died during Node's startup on every worker. Neither is optional for
 # this plugin — they are the two things that make `shortvideo.compose`
 # possible at all.
-sdk = "^2.0"
+# Raised ^2.0 -> ^2.10 when `google_service_account` moved into core: the
+# Google TTS nodes need that type, and 2.10.0 is the first core that has it.
+sdk = "^2.10"
 
 # Documentation for whoever reads the boot inventory; `pyproject.toml` is what
 # the registry actually discovers, and nothing validates the two against each
 # other. Note the schema's limit: `entry_points` is `dict[str, str]`, so a
-# plugin contributing *three* credential types (this one contributes
-# `google_service_account`, `minimax_api` and `openrouter_api`) cannot name
+# plugin contributing *two* credential types (this one contributes
+# `minimax_api` and `openrouter_api`; `google_service_account` is core's now) cannot name
 # all of them here. The `pyproject.toml` group is authoritative;
 # `tests/test_registration.py` is what keeps it honest.
 [entry_points]
 "tamtree.nodes" = "tamtree_shortvideo:NODES"
-"tamtree.credential_types" = "tamtree_shortvideo:GOOGLE_SERVICE_ACCOUNT_CREDENTIAL"
+"tamtree.credential_types" = "tamtree_shortvideo:MINIMAX_API_CREDENTIAL"
 "tamtree.curated_backends" = "tamtree_shortvideo:REMOTION_BACKEND"
