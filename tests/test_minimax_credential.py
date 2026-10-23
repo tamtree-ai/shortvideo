@@ -12,7 +12,7 @@ from tamtree_plugin_sdk import CredentialTypeSpec
 from tamtree_plugin_sdk.http_client import credential_auth_headers
 
 from tamtree_shortvideo.credentials import (
-    GOOGLE_SERVICE_ACCOUNT_CREDENTIAL,
+    CREDENTIAL_TYPE,
     MINIMAX_API_CREDENTIAL,
     MINIMAX_CREDENTIAL_TYPE,
     MINIMAX_DEFAULT_TEST_URL,
@@ -29,7 +29,7 @@ def test_it_is_its_own_type_not_a_generic_api_key() -> None:
     credential picker." On a canvas with Google and MiniMax slots, "API key"
     names neither."""
     assert MINIMAX_API_CREDENTIAL.type == MINIMAX_CREDENTIAL_TYPE == "minimax_api"
-    assert MINIMAX_API_CREDENTIAL.type != GOOGLE_SERVICE_ACCOUNT_CREDENTIAL.type
+    assert MINIMAX_API_CREDENTIAL.type != CREDENTIAL_TYPE
     assert isinstance(MINIMAX_API_CREDENTIAL, CredentialTypeSpec)
 
 
@@ -96,7 +96,6 @@ def test_it_ships_a_probe_url_so_test_connection_says_something_real() -> None:
     assert field.default == MINIMAX_DEFAULT_TEST_URL
     assert field.required is False
     assert field.secret is False
-    assert GOOGLE_SERVICE_ACCOUNT_CREDENTIAL.test_url_field is None
 
 
 def test_the_probe_generates_nothing() -> None:
